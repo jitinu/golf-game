@@ -108,8 +108,9 @@ export class CameraController {
     const ballVector = this.ballVector.set(ball.x, ball.y, ball.z);
     const pinVector = new THREE.Vector3(pin.x, pin.y, pin.z);
     if (this.mode === 'aim') {
-      this.desired.copy(ballVector).addScaledVector(aim, -7).add(new THREE.Vector3(0, 2.4, 0));
-      this.target.copy(ballVector).addScaledVector(aim, 25).add(new THREE.Vector3(0, 1.5, 0));
+      const right = new THREE.Vector3(-aim.z, 0, aim.x);
+      this.desired.copy(ballVector).addScaledVector(aim, -5.5).addScaledVector(right, 2.2).add(new THREE.Vector3(0, 1.8, 0));
+      this.target.copy(ballVector).addScaledVector(aim, 20).addScaledVector(right, 1.8).add(new THREE.Vector3(0, -0.2, 0));
       return false;
     }
     if (this.mode === 'green') {

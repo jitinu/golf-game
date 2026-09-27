@@ -5,6 +5,9 @@ const face = new THREE.MeshPhysicalMaterial({ color: 0x9ca5af, roughness: 0.35, 
 const crown = new THREE.MeshPhysicalMaterial({ color: 0x17212c, roughness: 0.2, metalness: 0.8, clearcoat: 1 });
 const grip = new THREE.MeshPhysicalMaterial({ color: 0x151515, roughness: 0.9 });
 
+/** Head outlines below are drawn at ~2.5× real size for legible curves and scaled down here (driver ≈ 12 cm wide). */
+const HEAD_SCALE: Record<string, number> = { driver: 0.42, wood: 0.4, hybrid: 0.36, putter: 0.42 };
+
 function extrudedHead(shape: THREE.Shape, material: THREE.Material, depth: number): THREE.Mesh {
   return new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelSegments: 2, bevelSize: 0.012, bevelThickness: 0.012 }), material);
 }
@@ -29,6 +32,7 @@ export function createClubModel(club: ClubDef): THREE.Group {
   }
   const head = extrudedHead(shape, club.category === 'driver' ? crown : face, 0.08);
   head.rotation.x = Math.PI / 2;
+  head.scale.setScalar(HEAD_SCALE[club.category] ?? 0.45);
   head.position.y = -1.05;
   group.add(head);
   return group;

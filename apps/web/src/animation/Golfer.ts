@@ -391,8 +391,18 @@ export class Golfer {
     this.rig.socket.add(this.club);
   }
 
+  /** Moves to the next lie and resets the pose to address. */
   placeForBall(position: { x: number; y: number; z: number }, yaw: number): void {
     this.faceAim(position, yaw);
+    this.returnToAddress();
+  }
+
+  private returnToAddress(): void {
+    const clip = this.clips.get('swing_full');
+    if (!clip) return;
+    const address = this.mixer.clipAction(clip);
+    this.mixer.stopAllAction();
+    address.reset().play().paused = true;
   }
 
   /** Right-handed address: golfer stands perpendicular to the target line, ball in front of the left foot. */
