@@ -18,7 +18,7 @@ export class WaterSurface {
   constructor(course: LoadedCourse, preset: GraphicsPreset) {
     const sun = new THREE.Vector3(0.4, 0.8, 0.3).normalize();
     course.manifest.features.water.forEach((polygon) => {
-      const shape = new THREE.Shape(polygon.points.map((point) => new THREE.Vector2(point.x, -point.z)));
+      const shape = new THREE.Shape(polygon.points.map((point) => new THREE.Vector2(point.x, point.z)));
       const geometry = new THREE.ShapeGeometry(shape);
       const water = new Water(geometry, {
         textureWidth: preset.waterRes,

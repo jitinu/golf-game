@@ -34,7 +34,7 @@ export class HoleController {
       terrain: this.course.sampler,
       cup: this.cup(),
       aero: { airDensity: 1.225, dragMultiplier: 1, liftMultiplier: 1, spinDecayPerSecond: 0.07 },
-    }, { record: true });
+    }, { record: true, maxTime: 15 });
     const terminal = result.final;
     const lastSafe = [...result.trajectory].reverse().find((state) => state.surface === SurfaceId.Fairway || state.surface === SurfaceId.Rough || state.surface === SurfaceId.FirstCut)?.position ?? from;
     const drop = result.events.some((event) => event.type === 'water') ? lastSafe : from;

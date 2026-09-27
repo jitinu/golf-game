@@ -1,39 +1,104 @@
-import { validatePlayerName } from '@golf/protocol';
-import type { GameState } from '../game/GameState.js';
+import type { GameSession } from '../game/GameSession.js';
+import { CourseSelect } from './CourseSelect.js';
+import { Hud } from './Hud.js';
+import { ClubSelector } from './ClubSelector.js';
+import { Meters } from './Meters.js';
+import { Scorecard } from './Scorecard.js';
+import { NameEntry } from './NameEntry.js';
+import { Leaderboard } from './Leaderboard.js';
+import { Settings } from './Settings.js';
+import { StatsOverlay } from './StatsOverlay.js';
+import { Toast } from './Toast.js';
+import './styles.css';
 
 export class UI {
-  readonly root: HTMLDivElement;
-  readonly hud: HTMLDivElement;
-  readonly power: HTMLDivElement;
-  private readonly title: HTMLHeadingElement;
-  constructor() {
-    this.root = document.createElement('div');
+  readonly root = document.createElement('div');
+  readonly hud: Hud;
+  readonly meters: Meters;
+  readonly clubs: ClubSelector;
+  readonly toast: Toast;
+  readonly scorecard: Scorecard;
+  readonly nameEntry: NameEntry;
+  readonly leaderboard: Leaderboard;
+  readonly settings: Settings;
+  readonly stats: StatsOverlay;
+  private readonly gameplay: HTMLElement[];
+  private courseSelect: CourseSelect | undefined;
+  private lastMessage: string | undefined;
+
+  constructor(
+    private readonly session: GameSession,
+    private readonly onStartCourse: (path: string) => void,
+  ) {
     this.root.className = 'ui';
-    this.root.innerHTML = `<div class="panel course-select"><h1>Pinecrest</h1><p>Three holes. One clean round.</p><button data-start>Start round</button></div>`;
-    this.hud = document.createElement('div');
-    this.hud.className = 'panel hud';
-    this.power = document.createElement('div');
-    this.power.className = 'meter power';
-    this.title = document.createElement('h2');
-    this.hud.append(this.title, this.power);
-    this.root.append(this.hud);
     document.body.append(this.root);
-    this.injectStyles();
+    this.hud = new Hud(this.root);
+    this.meters = new Meters(this.root);
+    this.clubs = new ClubSelector(this.root, (id) => session.setClub(id));
+    this.toast = new Toast(this.root);
+    this.stats = new StatsOverlay(this.root);
+    this.scorecard = new Scorecard(this.root, () => {
+      this.scorecard.hide();
+      this.session.requestNameEntry();
+    });
+    this.nameEntry = new NameEntry(this.root, (name) => {
+      void this.submitName(name);
+    });
+    this.leaderboard = new Leaderboard(this.root, () => {
+      this.leaderboard.hide();
+      this.session.reset();
+      this.showCourseSelect();
+    });
+    this.settings = new Settings(this.root, () => {
+      location.reload();
+    });
+    const settingsButton = document.createElement('button');
+    settingsButton.className = 'button settings-button';
+    settingsButton.textContent = 'Settings';
+    settingsButton.onclick = () => this.settings.show();
+    this.root.append(settingsButton);
+    this.gameplay = [this.hud.root, this.hud.swingButton, this.meters.root, this.clubs.root];
+    this.showCourseSelect();
+    session.onChange((state) => {
+      const inRound = state.phase !== 'courseSelect';
+      this.gameplay.forEach((element) => {
+        element.style.display = inRound ? '' : 'none';
+      });
+      this.hud.update(state, session.course?.manifest.name ?? 'Course');
+      this.meters.update(state.power, state.accuracy);
+      this.clubs.select(state.selectedClub);
+      this.clubs.setEnabled(state.phase === 'aiming');
+      if (state.message && state.message !== this.lastMessage) this.toast.show(state.message, 2200);
+      this.lastMessage = state.message;
+      if (state.phase === 'scorecard') this.scorecard.show(session.strokes, session.course?.manifest.holes.map((hole) => hole.par) ?? []);
+      if (state.phase === 'nameEntry') this.nameEntry.show();
+    });
   }
-  onStart(callback: () => void): void { this.root.querySelector('[data-start]')?.addEventListener('click', callback); }
-  update(state: GameState, distance: number, club: string): void {
-    this.title.textContent = `Hole ${state.hole} · Stroke ${state.stroke} · ${club}`;
-    this.power.textContent = `${Math.round(state.power * 100)}% power · ${Math.round(distance)} m to pin`;
+
+  showCourseSelect(): void {
+    this.courseSelect?.remove();
+    this.courseSelect = new CourseSelect(this.root, this.session.scoreService, (course) => {
+      this.courseSelect?.remove();
+      this.onStartCourse(course.path);
+    });
   }
-  nameEntry(): string | null {
-    const name = window.prompt('Enter your name') ?? '';
-    const result = validatePlayerName(name);
-    if (!result.ok) { window.alert(result.reason); return null; }
-    return result.name;
+
+  hideCourseSelect(): void {
+    this.courseSelect?.remove();
   }
-  private injectStyles(): void {
-    const style = document.createElement('style');
-    style.textContent = `:root{font-family:Inter,system-ui,sans-serif;color:#f7fafb}body{margin:0;overflow:hidden;background:#9bb5c4}.ui{position:fixed;inset:0;pointer-events:none}.panel{pointer-events:auto;background:#101d24dd;border:1px solid #ffffff24;border-radius:14px;box-shadow:0 12px 40px #0005;padding:20px}.course-select{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center}.course-select button{background:#72c68b;border:0;border-radius:8px;padding:12px 22px;font-weight:700;cursor:pointer}.hud{position:absolute;left:20px;top:20px;min-width:230px}.hud h2{margin:0 0 8px;font-size:16px}.meter{color:#b9d9c3}`;
-    document.head.append(style);
+
+  private async submitName(name: string): Promise<void> {
+    this.nameEntry.setBusy(true);
+    try {
+      const response = await this.session.finish(name);
+      this.nameEntry.hide();
+      if (this.session.course) {
+        this.leaderboard.show(await this.session.scoreService.leaderboard(this.session.course.manifest.courseId), response?.scoreId);
+      }
+    } catch (error) {
+      this.nameEntry.setError(`Could not save score: ${String(error)}`);
+    } finally {
+      this.nameEntry.setBusy(false);
+    }
   }
 }

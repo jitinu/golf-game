@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import type { LoadedCourse } from '@golf/course-format';
 import type { Environment } from '../render/Environment.js';
+import { createTerrainMaterial } from './TerrainMaterial.js';
 
-function createMaskTexture(course: LoadedCourse): THREE.DataTexture {
+export function createMaskTexture(course: LoadedCourse): THREE.DataTexture {
   const texture = new THREE.DataTexture(new Uint8Array(course.surfaceMask.data).buffer, course.surfaceMask.width, course.surfaceMask.depth, THREE.RedFormat, THREE.UnsignedByteType);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -22,9 +23,9 @@ function createTerrainGeometry(course: LoadedCourse): THREE.BufferGeometry {
       const sourceX = Math.min(hf.width - 1, ix * stride);
       const sourceZ = Math.min(hf.depth - 1, iz * stride);
       const index = iz * width + ix;
-      positions.setY(index, hf.data[sourceZ * hf.width + sourceX] ?? 0);
-      positions.setX(index, (sourceX * hf.cellSize) + hf.origin.x - ((hf.width - 1) * hf.cellSize) / 2);
-      positions.setZ(index, (sourceZ * hf.cellSize) + hf.origin.z - ((hf.depth - 1) * hf.cellSize) / 2);
+      positions.setX(index, sourceX * hf.cellSize + hf.origin.x);
+      positions.setY(index, -(sourceZ * hf.cellSize + hf.origin.z));
+      positions.setZ(index, hf.data[sourceZ * hf.width + sourceX] ?? 0);
     }
   }
   geometry.rotateX(-Math.PI / 2);
@@ -38,15 +39,14 @@ export class TerrainMesh {
 
   constructor(course: LoadedCourse, environment?: Environment) {
     this.maskTexture = createMaskTexture(course);
-    const material = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
-    material.onBeforeCompile = (shader) => {
-      shader.uniforms.surfaceMask = { value: this.maskTexture };
-      shader.fragmentShader = shader.fragmentShader
-        .replace('uniform vec3 diffuse;', 'uniform vec3 diffuse; uniform sampler2D surfaceMask;')
-        .replace('#include <color_fragment>', '#include <color_fragment>\nfloat surfaceValue = texture2D(surfaceMask, vMapUv).r * 255.0;\nvec3 surfaceTint = vec3(0.33,0.48,0.20);\nif (surfaceValue < 0.5) surfaceTint = vec3(0.18,0.42,0.16); else if (surfaceValue > 3.5 && surfaceValue < 4.5) surfaceTint = vec3(0.76,0.68,0.48); else if (surfaceValue > 5.5 && surfaceValue < 7.5) surfaceTint = vec3(0.50,0.48,0.44);\ndiffuseColor.rgb *= surfaceTint;');
-    };
+    const mask = course.surfaceMask;
+    const material = createTerrainMaterial(
+      this.maskTexture,
+      new THREE.Vector2(mask.origin.x, mask.origin.z),
+      new THREE.Vector2(mask.width * mask.cellSize, mask.depth * mask.cellSize),
+      environment,
+    );
     this.mesh = new THREE.Mesh(createTerrainGeometry(course), material);
     this.mesh.receiveShadow = true;
-    environment?.setupMaterial(material);
   }
 }

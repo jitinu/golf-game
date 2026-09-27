@@ -9,8 +9,11 @@ export interface GameState {
   aimYaw: number;
   power: number;
   accuracy: number;
+  distanceToPin: number;
+  par: number;
+  message?: string;
 }
 
 export function initialGameState(): GameState {
-  return { phase: 'courseSelect', hole: 1, stroke: 1, holeStrokes: [], selectedClub: 'driver', aimYaw: 0, power: 0, accuracy: 0 };
+  return { phase: 'courseSelect', hole: 1, stroke: 1, holeStrokes: [], selectedClub: 'driver', aimYaw: 0, power: 0, accuracy: 0, distanceToPin: 0, par: 4 };
 }

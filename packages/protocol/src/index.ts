@@ -40,6 +40,7 @@ export interface FinishRunResponse {
 
 export interface LeaderboardEntry {
   rank: number;
+  scoreId?: string;
   playerName: string;
   totalStrokes: number;
   toPar: number;

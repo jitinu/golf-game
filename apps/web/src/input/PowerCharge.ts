@@ -1,23 +1,80 @@
+export type ChargeStage = 'idle' | 'power' | 'accuracy';
+
+const POWER_CYCLE_MS = 1400;
+const ACCURACY_SWEEP_MS = 900;
+
+/**
+ * Hold-to-charge power meter followed by a timing-based accuracy sweep.
+ * Bound to a dedicated trigger element and the Space key so canvas drags stay free for aiming.
+ */
 export class PowerCharge {
-  private active = false;
-  private accuracyPhase = false;
+  stage: ChargeStage = 'idle';
+  enabled = true;
   private started = 0;
   private marker = 0;
-  private onPowerValue: (value: number) => void = () => undefined;
-  private onAccuracyValue: (value: number) => void = () => undefined;
-  constructor(private readonly element: HTMLElement, onPower: (value: number) => void, onAccuracy: (value: number) => void) {
-    this.onPowerValue = onPower;
-    this.onAccuracyValue = onAccuracy;
-    element.addEventListener('pointerdown', () => this.start());
-    window.addEventListener('keydown', (event) => { if (event.code === 'Space') { event.preventDefault(); this.start(); } });
-    window.addEventListener('pointerup', () => this.release());
-    window.addEventListener('keyup', (event) => { if (event.code === 'Space') this.release(); });
+
+  constructor(
+    trigger: HTMLElement,
+    private readonly onPower: (value: number) => void,
+    private readonly onAccuracy: (value: number) => void,
+    private readonly onComplete: () => void,
+  ) {
+    trigger.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      trigger.setPointerCapture(event.pointerId);
+      this.press();
+    });
+    trigger.addEventListener('pointerup', () => this.release());
+    trigger.addEventListener('pointercancel', () => this.release());
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'Space' && !event.repeat && !(event.target instanceof HTMLInputElement)) {
+        event.preventDefault();
+        this.press();
+      }
+    });
+    window.addEventListener('keyup', (event) => {
+      if (event.code === 'Space') this.release();
+    });
   }
-  private start(): void { if (!this.active) { this.active = true; this.accuracyPhase = false; this.started = performance.now(); } else if (this.accuracyPhase) { this.onAccuracyValue((this.marker - 0.5) * 2); this.active = false; } }
-  private release(): void { if (!this.active || this.accuracyPhase) return; this.onPowerValue(Math.min(1, (performance.now() - this.started) / 1200)); this.accuracyPhase = true; this.started = performance.now(); }
+
+  reset(): void {
+    this.stage = 'idle';
+    this.onPower(0);
+    this.onAccuracy(0);
+  }
+
+  private press(): void {
+    if (!this.enabled) return;
+    if (this.stage === 'idle') {
+      this.stage = 'power';
+      this.started = performance.now();
+    } else if (this.stage === 'accuracy') {
+      this.onAccuracy(this.accuracyAt(performance.now()));
+      this.stage = 'idle';
+      this.onComplete();
+    }
+  }
+
+  private release(): void {
+    if (this.stage !== 'power') return;
+    this.onPower(this.powerAt(performance.now()));
+    this.stage = 'accuracy';
+    this.started = performance.now();
+  }
+
+  private powerAt(now: number): number {
+    const t = ((now - this.started) % POWER_CYCLE_MS) / POWER_CYCLE_MS;
+    return t <= 0.5 ? t * 2 : 2 - t * 2;
+  }
+
+  private accuracyAt(now: number): number {
+    const t = ((now - this.started) % ACCURACY_SWEEP_MS) / ACCURACY_SWEEP_MS;
+    this.marker = t <= 0.5 ? t * 2 : 2 - t * 2;
+    return (this.marker - 0.5) * 2;
+  }
+
   update(now = performance.now()): void {
-    if (!this.active) return;
-    if (!this.accuracyPhase) { const t = Math.min(1, (now - this.started) / 1200); this.onPowerValue(t <= 0.5 ? t * 2 : 2 - t * 2); }
-    else { this.marker = Math.min(1, (now - this.started) / 800); this.onAccuracyValue((this.marker - 0.5) * 2); }
+    if (this.stage === 'power') this.onPower(this.powerAt(now));
+    else if (this.stage === 'accuracy') this.onAccuracy(this.accuracyAt(now));
   }
 }

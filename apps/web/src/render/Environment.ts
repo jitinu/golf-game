@@ -8,6 +8,7 @@ import type { GraphicsPreset } from '../app/GraphicsPreset.js';
 export class Environment {
   readonly csm: CSM;
   private readonly pmrem: THREE.PMREMGenerator;
+  private readonly patched = new WeakSet<THREE.Material>();
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -37,7 +38,15 @@ export class Environment {
   }
 
   setupMaterial(material: THREE.Material): void {
+    if (this.patched.has(material)) return;
+    this.patched.add(material);
+    const customCompile = material.onBeforeCompile;
     this.csm.setupMaterial(material);
+    const csmCompile = material.onBeforeCompile;
+    material.onBeforeCompile = (shader, renderer) => {
+      csmCompile(shader, renderer);
+      customCompile(shader, renderer);
+    };
   }
 
   private sunDirection(manifest: CourseManifest): THREE.Vector3 {
@@ -50,9 +59,13 @@ export class Environment {
   private async loadSky(manifest: CourseManifest, preset: GraphicsPreset): Promise<void> {
     const path = `/hdri/limpopo_golf_course_${preset.hdriRes}.hdr`;
     try {
+      // The dev server answers missing files with index.html, so verify the asset before parsing.
+      const head = await fetch(path, { method: 'HEAD' });
+      if (!head.ok || (head.headers.get('content-type') ?? '').includes('text/html')) throw new Error(`HDRI missing: ${path}`);
       const texture = await new RGBELoader().loadAsync(path);
       texture.mapping = THREE.EquirectangularReflectionMapping;
-      this.scene.environment = texture;
+      const generated = this.pmrem.fromEquirectangular(texture).texture;
+      this.scene.environment = generated;
       this.scene.background = texture;
     } catch {
       const environment = new RoomEnvironment();

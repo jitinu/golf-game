@@ -7,6 +7,16 @@ import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { GraphicsPreset } from '../app/GraphicsPreset.js';
 
+/** Objects flagged with `userData.excludeAO` (alpha-tested grass, sprites) are skipped in the AO normal/depth pre-pass, which ignores alpha discard. */
+class SceneGTAOPass extends GTAOPass {
+  override overrideVisibility(): void {
+    super.overrideVisibility();
+    this.scene.traverse((object) => {
+      if (object.userData.excludeAO === true) object.visible = false;
+    });
+  }
+}
+
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly composer: EffectComposer;
@@ -29,7 +39,7 @@ export class Renderer {
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.gtao = new GTAOPass(this.scene, this.camera);
+    this.gtao = new SceneGTAOPass(this.scene, this.camera);
     this.gtao.enabled = preset.gtao;
     this.composer.addPass(this.gtao);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.1, 0.4, 0.9);
@@ -53,6 +63,8 @@ export class Renderer {
   }
 
   render(): void {
+    this.renderer.info.autoReset = false;
+    this.renderer.info.reset();
     this.composer.render();
   }
 }

@@ -1,81 +1,246 @@
-import { loadCourse, type LoadedCourse } from '@golf/course-format';
+import * as THREE from 'three';
 import { CLUBS } from '@golf/sim';
-import { getGraphicsPreset } from './GraphicsPreset.js';
+import { getGraphicsPreset, type GraphicsPreset } from './GraphicsPreset.js';
+import { CameraController } from './CameraController.js';
 import { Renderer } from '../render/Renderer.js';
 import { Environment } from '../render/Environment.js';
 import { TerrainMesh } from '../course/TerrainMesh.js';
 import { GrassField } from '../course/GrassField.js';
 import { Vegetation } from '../course/Vegetation.js';
 import { WaterSurface } from '../course/WaterSurface.js';
-import { createCupAndFlag } from '../course/CupAndFlag.js';
-import { UI } from '../ui/UI.js';
+import { CupAndFlag } from '../course/CupAndFlag.js';
+import { Golfer } from '../animation/Golfer.js';
+import { BallView } from '../render/BallView.js';
 import { CourseDebugView } from '../debug/CourseDebugView.js';
-import { initialGameState, type GameState } from '../game/GameState.js';
+import { GameSession } from '../game/GameSession.js';
+import { UI } from '../ui/UI.js';
 import { AimDrag } from '../input/AimDrag.js';
 import { PowerCharge } from '../input/PowerCharge.js';
+import type { ResolvedShot } from '../game/HoleController.js';
+
+const HOLE_COMPLETE_PAUSE_MS = 1800;
+
+interface CourseScene {
+  group: THREE.Group;
+  grass: GrassField;
+  water: WaterSurface;
+  flag: CupAndFlag;
+  debug: CourseDebugView;
+}
 
 export class App {
+  readonly session = new GameSession();
   private readonly canvas: HTMLCanvasElement;
   private readonly ui: UI;
-  private readonly state: GameState = initialGameState();
+  private readonly aimDrag: AimDrag;
+  private readonly powerCharge: PowerCharge;
+  private readonly preset: GraphicsPreset;
+  private readonly query = new URLSearchParams(location.search);
   private renderer: Renderer | undefined;
-  private grass: GrassField | undefined;
-  private water: WaterSurface | undefined;
-  private course: LoadedCourse | undefined;
+  private environment: Environment | undefined;
+  private camera: CameraController | undefined;
+  private ball: BallView | undefined;
+  private golfer: Golfer | undefined;
+  private aimLine: THREE.Line | undefined;
+  private courseScene: CourseScene | undefined;
+  private activeShot: ResolvedShot | undefined;
+  private animating = false;
   private last = performance.now();
 
   constructor() {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'game';
     document.body.append(this.canvas);
-    this.ui = new UI();
-    this.ui.onStart(() => { void this.start(); });
-    new AimDrag(this.canvas, (delta) => { this.state.aimYaw += delta; }, () => undefined);
-    new PowerCharge(this.canvas, (power) => { this.state.power = power; }, (accuracy) => { this.state.accuracy = accuracy; });
+    this.preset = getGraphicsPreset(this.query.get('preset') ?? localStorage.getItem('golf-preset'));
+    this.ui = new UI(this.session, (path) => {
+      void this.start(path);
+    });
+    this.aimDrag = new AimDrag(this.canvas, (delta) => {
+      if (this.session.state.phase === 'aiming') this.session.setAim(this.session.aimYaw + delta);
+    });
+    this.powerCharge = new PowerCharge(
+      this.ui.hud.swingButton,
+      (power) => this.session.setCharge(power),
+      (accuracy) => this.session.setCharge(this.session.state.power, accuracy),
+      () => {
+        void this.hit();
+      },
+    );
+    this.session.onChange((state) => {
+      const ready = state.phase === 'aiming';
+      this.powerCharge.enabled = ready;
+      this.aimDrag.enabled = ready;
+      this.ui.hud.setSwingEnabled(ready);
+      if (this.golfer && this.session.course) {
+        this.golfer.setClub(CLUBS[state.selectedClub] ?? CLUBS.driver!);
+        if (ready) this.golfer.faceAim(this.session.ballPosition, this.session.aimYaw);
+      }
+      this.updateAimLine();
+    });
   }
 
-  async start(): Promise<void> {
-    this.state.phase = 'aiming';
-    this.ui.root.querySelector('.course-select')?.remove();
-    this.course = await loadCourse('/courses/pinecrest/');
-    const preset = getGraphicsPreset(new URLSearchParams(location.search).get('preset'));
+  async start(coursePath = '/courses/pinecrest/'): Promise<void> {
     try {
-      this.renderer = new Renderer(this.canvas, preset);
+      await this.session.start(coursePath);
+      this.ui.hideCourseSelect();
+      if (!this.session.course || !this.session.holeController) return;
+      this.ensureRenderer();
+      if (!this.renderer || !this.environment) return;
+      this.disposeCourseScene();
+      const group = new THREE.Group();
+      const terrain = new TerrainMesh(this.session.course, this.environment);
+      group.add(terrain.mesh);
+      const grass = new GrassField(this.session.course, this.preset, this.renderer.scene.fog instanceof THREE.FogExp2 ? this.renderer.scene.fog : undefined);
+      group.add(grass.group);
+      group.add(new Vegetation(this.session.course, this.environment, this.renderer.renderer).group);
+      const water = new WaterSurface(this.session.course, this.preset);
+      group.add(water.group);
+      const flag = new CupAndFlag(this.session.holeController.cup(), this.environment);
+      group.add(flag);
+      const debug = new CourseDebugView(this.session.course);
+      debug.setVisible(localStorage.getItem('golf-debug') === 'true' || this.query.get('debug') === '1');
+      group.add(debug.group);
+      this.renderer.scene.add(group);
+      this.courseScene = { group, grass, water, flag, debug };
+      this.placeHole();
+      if (this.query.get('autoshot') === '1') {
+        window.setTimeout(() => {
+          this.session.setCharge(1, 0);
+          void this.hit(true);
+        }, 2000);
+      }
+      if (!this.animating) {
+        this.animating = true;
+        this.last = performance.now();
+        this.animate();
+      }
     } catch (error) {
-      this.ui.root.insertAdjacentHTML('beforeend', `<div class="panel">WebGL unavailable: ${String(error)}</div>`);
+      console.error(error);
+      this.ui.toast.show(`Unable to start course: ${String(error)}`, 8000);
+      this.ui.showCourseSelect();
+    }
+  }
+
+  private ensureRenderer(): void {
+    if (this.renderer || !this.session.course) return;
+    this.renderer = new Renderer(this.canvas, this.preset);
+    if (this.query.get('debug') === '1') Object.assign(window, { golfScene: this.renderer.scene, golfCamera: this.renderer.camera, golfRenderer: this.renderer.renderer });
+    this.environment = new Environment(this.renderer.scene, this.renderer.camera, this.session.course.manifest, this.preset, this.renderer.renderer);
+    this.ball = new BallView(this.environment);
+    this.renderer.scene.add(this.ball.mesh);
+    this.golfer = new Golfer(this.renderer.renderer);
+    this.renderer.scene.add(this.golfer.group);
+    this.camera = new CameraController(this.renderer.camera);
+    this.aimLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0xe8fff0, dashSize: 0.6, gapSize: 0.4 }));
+    this.renderer.scene.add(this.aimLine);
+    this.ui.stats.setVisible(localStorage.getItem('golf-stats') === 'true' || this.query.get('stats') === '1');
+  }
+
+  private disposeCourseScene(): void {
+    if (!this.courseScene || !this.renderer) return;
+    this.renderer.scene.remove(this.courseScene.group);
+    this.courseScene.group.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach((material) => material.dispose());
+      }
+    });
+    this.courseScene.debug.dispose();
+    this.courseScene = undefined;
+  }
+
+  private placeHole(): void {
+    if (!this.session.holeController || !this.ball || !this.golfer || !this.courseScene) return;
+    this.ball.place(this.session.ballPosition);
+    this.golfer.placeForBall(this.session.ballPosition, this.session.aimYaw);
+    this.golfer.setClub(CLUBS[this.session.selectedClub] ?? CLUBS.driver!);
+    this.courseScene.flag.setCup(this.session.holeController.cup());
+    if (this.camera) this.camera.snapToAim(this.session.ballPosition, this.session.holeController.cup().position, this.session.aimYaw);
+    this.powerCharge.reset();
+    this.updateAimLine();
+  }
+
+  private updateAimLine(): void {
+    if (!this.aimLine) return;
+    const start = this.session.ballPosition;
+    const visible = this.session.state.phase === 'aiming';
+    this.aimLine.visible = visible;
+    if (!visible) return;
+    const club = CLUBS[this.session.selectedClub];
+    const length = Math.min(club?.maxCarryHintM ?? 20, Math.max(4, this.session.state.distanceToPin)) * 0.25;
+    const direction = new THREE.Vector3(Math.sin(this.session.aimYaw), 0, -Math.cos(this.session.aimYaw));
+    const points: THREE.Vector3[] = [];
+    for (let step = 0; step <= 16; step += 1) {
+      const point = new THREE.Vector3(start.x, 0, start.z).addScaledVector(direction, (length * step) / 16);
+      point.y = (this.session.course?.sampler.heightAt(point.x, point.z) ?? start.y) + 0.05;
+      points.push(point);
+    }
+    this.aimLine.geometry.setFromPoints(points);
+    this.aimLine.computeLineDistances();
+  }
+
+  private async hit(skipAnimation = false): Promise<void> {
+    if (!this.golfer || !this.camera || !this.ball || this.session.state.phase !== 'aiming') return;
+    this.camera.mode = 'follow';
+    const resolved = await this.session.hit(this.golfer, skipAnimation);
+    if (!resolved) return;
+    this.activeShot = resolved;
+    this.ball.start(resolved.trajectory);
+  }
+
+  private onShotFinished(shot: ResolvedShot): void {
+    this.session.completeShot(shot);
+    if (!this.golfer || !this.ball || !this.camera) return;
+    if (this.session.state.phase === 'holeComplete') {
+      this.golfer.celebrate();
+      window.setTimeout(() => {
+        if (this.session.nextHole()) this.placeHole();
+      }, HOLE_COMPLETE_PAUSE_MS);
       return;
     }
-    const environment = new Environment(this.renderer.scene, this.renderer.camera, this.course.manifest, preset, this.renderer.renderer);
-    const terrain = new TerrainMesh(this.course, environment);
-    this.renderer.scene.add(terrain.mesh);
-    this.grass = new GrassField(this.course, preset);
-    this.renderer.scene.add(this.grass.group);
-    this.renderer.scene.add(new Vegetation(this.course).group);
-    this.water = new WaterSurface(this.course, preset);
-    this.renderer.scene.add(this.water.group);
-    this.renderer.scene.add(createCupAndFlag(this.course.cupFor(1)));
-    const debug = new CourseDebugView(this.course);
-    this.renderer.scene.add(debug.group);
-    debug.setVisible(false);
-    const tee = this.course.manifest.holes[0]?.tees.find((value) => value.id === 'middle')?.position;
-    const cup = this.course.cupFor(1).position;
-    if (tee) this.renderer.camera.position.set(tee.x, tee.y + 10, tee.z - 18);
-    this.renderer.camera.lookAt(cup.x, cup.y, cup.z);
-    this.last = performance.now();
-    this.animate(environment);
+    this.ball.place(this.session.ballPosition);
+    this.golfer.placeForBall(this.session.ballPosition, this.session.aimYaw);
+    this.camera.mode = 'aim';
+    this.powerCharge.reset();
+    this.updateAimLine();
   }
 
-  private animate(environment: Environment): void {
-    if (!this.renderer || !this.course) return;
+  private animate(): void {
+    requestAnimationFrame(() => this.animate());
+    if (!this.renderer || !this.camera) return;
     const now = performance.now();
+    const dtMs = Math.min(100, now - this.last);
     this.last = now;
-    this.grass?.update(now / 1000);
-    this.water?.update(now / 1000);
-    environment.update();
-    const cup = this.course.cupFor(this.state.hole).position;
-    const tee = this.course.manifest.holes[this.state.hole - 1]?.tees[1]?.position ?? cup;
-    this.ui.update(this.state, Math.hypot(cup.x - tee.x, cup.z - tee.z), CLUBS[this.state.selectedClub]?.displayName ?? this.state.selectedClub);
-    this.renderer.render();
-    requestAnimationFrame(() => this.animate(environment));
+    const dt = dtMs / 1000;
+    try {
+      this.aimDrag.update(dt);
+      this.powerCharge.update(now);
+      this.golfer?.update(dt);
+      if (this.ball && this.activeShot) {
+        this.ball.update(dtMs);
+        if (this.ball.playback.done) {
+          const shot = this.activeShot;
+          this.activeShot = undefined;
+          this.onShotFinished(shot);
+        }
+      }
+      const pin = this.session.holeController?.cup().position ?? this.session.ballPosition;
+      const ballPosition = this.ball?.mesh.position ?? this.session.ballPosition;
+      this.camera.update({ x: ballPosition.x, y: ballPosition.y, z: ballPosition.z }, pin, this.session.aimYaw, dt);
+      if (this.courseScene) {
+        this.courseScene.grass.update(this.renderer.camera.position, now / 1000);
+        this.courseScene.water.update(now / 1000);
+        this.courseScene.flag.update(now / 1000);
+        if (this.session.course && this.courseScene.debug.group.visible) {
+          this.courseScene.debug.updateReadout(this.session.course, new THREE.Vector3(ballPosition.x, ballPosition.y, ballPosition.z));
+        }
+      }
+      this.environment?.update();
+      this.renderer.render();
+      this.ui.stats.update(this.renderer.renderer.info.render.calls, this.renderer.renderer.info.render.triangles, dtMs);
+    } catch (error) {
+      console.error('Frame failed', error);
+    }
   }
 }
