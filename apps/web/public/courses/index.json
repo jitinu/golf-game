@@ -1,0 +1,10 @@
+[
+  {
+    "courseId": "pinecrest",
+    "name": "Pinecrest",
+    "description": "A rolling parkland course through the pines.",
+    "path": "/courses/pinecrest/",
+    "holes": 3,
+    "par": 12
+  }
+]

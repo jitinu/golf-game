@@ -1,0 +1,7 @@
+import { GRAPHICS_PRESETS, type GraphicsPresetName } from '../app/GraphicsPreset.js';
+export class Settings {
+  readonly root: HTMLDivElement;
+  constructor(parent: HTMLElement, onChange: (preset: GraphicsPresetName, debug: boolean, stats: boolean) => void) { this.root = document.createElement('div'); this.root.className = 'modal'; this.root.innerHTML = `<div class="panel"><h2>Settings</h2><label>Graphics <select>${Object.keys(GRAPHICS_PRESETS).map((name) => `<option>${name}</option>`).join('')}</select></label><label><input type="checkbox" class="debug"> Debug view</label><label><input type="checkbox" class="stats"> Stats overlay</label><button class="button primary">Apply (reload)</button></div>`; this.root.querySelector('button')?.addEventListener('click', () => { const preset = (this.root.querySelector('select') as HTMLSelectElement).value as GraphicsPresetName; const debug = (this.root.querySelector('.debug') as HTMLInputElement).checked; const stats = (this.root.querySelector('.stats') as HTMLInputElement).checked; localStorage.setItem('golf-preset', preset); localStorage.setItem('golf-debug', String(debug)); localStorage.setItem('golf-stats', String(stats)); onChange(preset, debug, stats); this.hide(); }); this.root.style.display = 'none'; parent.append(this.root); }
+  show(): void { this.root.style.display = 'grid'; }
+  hide(): void { this.root.style.display = 'none'; }
+}

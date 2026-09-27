@@ -145,7 +145,7 @@ async function leaderboard(request: Request, client: ApiClient): Promise<Respons
   if (!courseId) return errorResponse('courseId is required', 400);
   const { data: scores, error: scoreError } = await client
     .from('scores')
-    .select('player_name,total_strokes,to_par,created_at')
+    .select('id,player_name,total_strokes,to_par,created_at')
     .eq('course_id', courseId)
     .order('total_strokes', { ascending: true })
     .order('created_at', { ascending: true })
@@ -161,6 +161,7 @@ async function leaderboard(request: Request, client: ApiClient): Promise<Respons
     courseId,
     entries: (scores ?? []).map((score, index) => ({
       rank: index + 1,
+      scoreId: score.id,
       playerName: score.player_name,
       totalStrokes: score.total_strokes,
       toPar: score.to_par,
