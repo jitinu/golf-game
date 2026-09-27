@@ -1,1 +1,1 @@
-{"id":"5-iron","displayName":"5 Iron","category":"iron","loftDeg":24,"launchAngleDeg":20,"speedCurve":[[0,0],[0.5,39],[1,56]],"baseBackspinRpm":6000,"accuracyToSideSpinRpm":1350,"accuracyToYawDeg":2.8,"dispersionDeg":1,"smashFactor":1.37,"maxCarryHintM":170}
+{"id":"5-iron","displayName":"5 Iron","category":"iron","loftDeg":24,"launchAngleDeg":18,"speedCurve":[[0,0],[0.5,42],[1,59]],"baseBackspinRpm":5700,"accuracyToSideSpinRpm":1350,"accuracyToYawDeg":2.8,"dispersionDeg":1,"smashFactor":1.37,"maxCarryHintM":170}

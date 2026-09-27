@@ -4,7 +4,7 @@ export * from './physics.js';
 export * from './aero.js';
 export * from './rng.js';
 export * from './clubs.js';
-export { stepBall, simulateShot } from './step.js';
+export { stepBall, stepBallWithEvents, simulateShot } from './step.js';
 import type { Vec3 } from './types.js';
 
 export function holeDistance(from: Vec3, to: Vec3): number {

@@ -1,1 +1,1 @@
-{"id":"5-wood","displayName":"5 Wood","category":"wood","loftDeg":18,"launchAngleDeg":18,"speedCurve":[[0,0],[0.5,44],[1,64]],"baseBackspinRpm":4200,"accuracyToSideSpinRpm":1650,"accuracyToYawDeg":3,"dispersionDeg":1.2,"smashFactor":1.43,"maxCarryHintM":205}
+{"id":"5-wood","displayName":"5 Wood","category":"wood","loftDeg":18,"launchAngleDeg":15,"speedCurve":[[0,0],[0.5,46],[1,67]],"baseBackspinRpm":4500,"accuracyToSideSpinRpm":1650,"accuracyToYawDeg":3,"dispersionDeg":1.2,"smashFactor":1.43,"maxCarryHintM":205}

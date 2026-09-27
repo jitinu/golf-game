@@ -1,1 +1,1 @@
-{"id":"8-iron","displayName":"8 Iron","category":"iron","loftDeg":35,"launchAngleDeg":26,"speedCurve":[[0,0],[0.5,35],[1,50]],"baseBackspinRpm":7600,"accuracyToSideSpinRpm":1200,"accuracyToYawDeg":2.5,"dispersionDeg":0.9,"smashFactor":1.34,"maxCarryHintM":140}
+{"id":"8-iron","displayName":"8 Iron","category":"iron","loftDeg":35,"launchAngleDeg":21.5,"speedCurve":[[0,0],[0.5,37],[1,52]],"baseBackspinRpm":7800,"accuracyToSideSpinRpm":1200,"accuracyToYawDeg":2.5,"dispersionDeg":0.9,"smashFactor":1.34,"maxCarryHintM":140}

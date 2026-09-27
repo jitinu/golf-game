@@ -6,6 +6,7 @@ import {
   createRng,
   simulateShot,
   shotToInitialState,
+  stepBallWithEvents,
   type SimWorld,
 } from '@golf/sim';
 
@@ -54,6 +55,35 @@ describe('simulation golden shots', () => {
     expect(result.carryDistance).toBeLessThan(165);
   });
 
+  it('drives realistic wedges', () => {
+    const origin = { x: 0, y: 0.02135, z: 0 };
+    const pitchingWedge = simulateShot(
+      shotToInitialState({ clubId: 'pitching-wedge', aimYaw: 0, power: 1, accuracy: 0 }, CLUBS['pitching-wedge']!, origin, SurfaceId.Fairway, createRng(1)),
+      flatWorld(),
+    );
+    const sandWedge = simulateShot(
+      shotToInitialState({ clubId: 'sand-wedge', aimYaw: 0, power: 1, accuracy: 0 }, CLUBS['sand-wedge']!, origin, SurfaceId.Fairway, createRng(1)),
+      flatWorld(),
+    );
+    expect(pitchingWedge.carryDistance).toBeGreaterThan(105);
+    expect(pitchingWedge.carryDistance).toBeLessThan(135);
+    expect(sandWedge.carryDistance).toBeGreaterThan(70);
+    expect(sandWedge.carryDistance).toBeLessThan(105);
+    expect(sandWedge.apexHeight).toBeGreaterThan(20);
+  });
+
+  it('curves a positive-accuracy driver to the right', () => {
+    const initial = shotToInitialState(
+      { clubId: 'driver', aimYaw: 0, power: 1, accuracy: 0.5 },
+      CLUBS.driver!,
+      { x: 0, y: 0.02135, z: 0 },
+      SurfaceId.Fairway,
+      createRng(1),
+    );
+    const result = simulateShot(initial, flatWorld());
+    expect(result.final.position.x).toBeGreaterThan(0);
+  });
+
   it('stops a half-power putt in the expected range', () => {
     const initial = shotToInitialState(
       { clubId: 'putter', aimYaw: 0, power: 0.5, accuracy: 0 },
@@ -86,11 +116,14 @@ describe('simulation golden shots', () => {
     expect(downhill.totalDistance).toBeGreaterThan(uphill.totalDistance);
   });
 
-  it('captures a slow straight putt and rejects a fast edge putt', () => {
+  it('captures a slow putt, emits lipout, and rejects a fast edge putt', () => {
     const terrain = { heightAt: () => 0, normalAt: () => ({ x: 0, y: 1, z: 0 }), surfaceAt: () => SurfaceId.Green };
-    const world: SimWorld = { terrain, cup: { position: { x: 0, y: 0, z: -1 }, radius: 0.054, depth: 0.1 }, aero: { airDensity: 1.225, dragMultiplier: 1, liftMultiplier: 1, spinDecayPerSecond: 0.07 } };
-    const slow = simulateShot({ position: { x: 0, y: 0.02135, z: 0 }, velocity: { x: 0, y: 0, z: -1 }, angularVelocity: { x: 0, y: 0, z: 0 }, mode: 'roll', surface: SurfaceId.Green, time: 0 }, world);
+    const world: SimWorld = { terrain, cup: { position: { x: 0, y: 0, z: 0 }, radius: 0.054, depth: 0.1 }, aero: { airDensity: 1.225, dragMultiplier: 1, liftMultiplier: 1, spinDecayPerSecond: 0.07 } };
+    const slow = simulateShot({ position: { x: 0, y: 0.02135, z: 0.04 }, velocity: { x: 0, y: 0, z: -0.2 }, angularVelocity: { x: 0, y: 0, z: 0 }, mode: 'roll', surface: SurfaceId.Green, time: 0 }, world);
     expect(slow.holed).toBe(true);
+    const lipout = stepBallWithEvents({ position: { x: 0.052, y: 0.02135, z: 0 }, velocity: { x: -1.8, y: 0, z: 0 }, angularVelocity: { x: 0, y: 0, z: 0 }, mode: 'roll', surface: SurfaceId.Green, time: 0 }, world);
+    expect(lipout.event).toBe('lipout');
+    expect(lipout.state.mode).toBe('roll');
     const fast = simulateShot({ position: { x: 0.05, y: 0.02135, z: 0 }, velocity: { x: 0, y: 0, z: -3 }, angularVelocity: { x: 0, y: 0, z: 0 }, mode: 'roll', surface: SurfaceId.Green, time: 0 }, world);
     expect(fast.holed).toBe(false);
   });
