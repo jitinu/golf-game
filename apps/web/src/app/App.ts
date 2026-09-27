@@ -95,7 +95,7 @@ export class App {
       group.add(grass.group);
       const vegetation = new Vegetation(this.session.course, this.preset, this.environment, this.renderer.renderer);
       group.add(vegetation.group);
-      const water = new WaterSurface(this.session.course, this.preset);
+      const water = new WaterSurface(this.session.course, this.preset, this.environment.sunDirection);
       group.add(water.group);
       const flag = new CupAndFlag(this.session.holeController.cup(), this.environment);
       group.add(flag);

@@ -36,7 +36,7 @@ export class Environment {
       shadowMapSize: 2048,
       mode: 'practical',
       maxFar: 350,
-      lightIntensity: 3.2,
+      lightIntensity: 2.3,
       lightDirection: this.sunDirection.clone().negate(),
       parent: scene,
     });
@@ -46,7 +46,7 @@ export class Environment {
       light.shadow.bias = -0.0002;
     }
     scene.fog = new THREE.FogExp2(0xbccbd4, 0.00045);
-    this.hemisphere = new THREE.HemisphereLight(0xbfd6df, 0x50603f, 1.1);
+    this.hemisphere = new THREE.HemisphereLight(0xbfd6df, 0x50603f, 0.7);
     scene.add(this.hemisphere);
     void this.loadSky(manifest, preset);
   }
@@ -77,12 +77,12 @@ export class Environment {
       texture.mapping = THREE.EquirectangularReflectionMapping;
       const generated = this.pmrem.fromEquirectangular(texture).texture;
       this.scene.environment = generated;
-      this.scene.environmentIntensity = 0.55;
+      this.scene.environmentIntensity = 0.4;
       this.scene.background = texture;
       this.scene.backgroundIntensity = 0.9;
       this.scene.backgroundBlurriness = 0;
       // Image-based light replaces most of the ambient fill.
-      this.hemisphere.intensity = 0.25;
+      this.hemisphere.intensity = 0.2;
     } catch {
       const environment = new RoomEnvironment();
       const generated = this.pmrem.fromScene(environment).texture;

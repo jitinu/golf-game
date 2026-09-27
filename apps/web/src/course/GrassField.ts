@@ -67,7 +67,8 @@ function grassAtlas(): THREE.Texture {
       const height = size * (0.55 + hash(blade * 1.7) * 0.4);
       const lean = (hash(blade * 5.1) - 0.5) * 60;
       const light = 36 + hash(blade * 2.9) * 18;
-      context.fillStyle = `hsl(${96 + hash(blade) * 22}, 52%, ${light}%)`;
+      // Hue range matches the turf albedo (yellow-green), so blades read as part of the ground rather than emerald spikes.
+      context.fillStyle = `hsl(${78 + hash(blade) * 18}, 46%, ${light}%)`;
       context.beginPath();
       context.moveTo(x - 6, size);
       context.quadraticCurveTo(x + lean * 0.4, size - height * 0.5, x + lean, size - height);
@@ -151,9 +152,9 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
         float translucency = pow(max(dot(-vViewDir, sunDirection), 0.0), 3.0) * vHeight * 0.35;
         vec3 sun = vec3(1.0, 0.95, 0.86) * (diffuse * 0.75 + translucency);
         vec3 sky = vec3(0.62, 0.72, 0.8) * 0.45;
-        vec3 color = tex.rgb * vTint * (sun + sky) * ao * 1.6;
+        vec3 color = tex.rgb * vTint * (sun + sky) * ao * 1.25;
         // Far blades lose contrast so sparse distant clusters read as ground texture rather than speckle.
-        color = mix(color, color * 1.35 + vec3(0.02, 0.04, 0.01), smoothstep(12.0, 55.0, vFogDepth));
+        color = mix(color, color * 1.15 + vec3(0.01, 0.02, 0.005), smoothstep(12.0, 55.0, vFogDepth));
         float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
         gl_FragColor = vec4(mix(color, fogColor, fogFactor), 1.0);
       }

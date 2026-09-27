@@ -16,6 +16,28 @@ export interface SourceCourse extends Omit<CourseManifest, 'heightfield' | 'surf
   maskCellSize: number;
   /** Deterministic tree belts along the holes, appended to the hand-placed `features.trees`. */
   treeScatter?: TreeScatter;
+  /** Streams authored as centrelines; rasterised into `features.water` polygons with a fixed water level. */
+  rivers?: River[];
+}
+
+export interface River {
+  points: { x: number; z: number }[];
+  widths: number[];
+  /** Absolute water surface height; terrain is carved below it and banks blended down to meet it. */
+  level: number;
+}
+
+/** Terrain carved out around hazards, in metres. */
+const BUNKER_DEPTH = 0.55;
+const BUNKER_LIP = 0.18;
+const BUNKER_BLEND = 2.5;
+const WATER_BANK = 0.35;
+const WATER_BED = 1.4;
+const WATER_BLEND = 7;
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 export interface TreeScatter {
@@ -161,18 +183,70 @@ function classifySurface(x: number, z: number, features: CourseFeatures): Surfac
   return surface;
 }
 
-function heightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
+/** Widens a centreline into a closed polygon: left offsets forward, right offsets back. */
+function riverPolygon(river: River): Polygon {
+  const sampled = catmullRom(river.points, river.widths, 12);
+  const left: { x: number; z: number }[] = [];
+  const right: { x: number; z: number }[] = [];
+  for (let index = 0; index < sampled.length; index += 1) {
+    const previous = sampled[Math.max(0, index - 1)]!;
+    const next = sampled[Math.min(sampled.length - 1, index + 1)]!;
+    const length = Math.hypot(next.x - previous.x, next.z - previous.z) || 1;
+    const nx = -(next.z - previous.z) / length;
+    const nz = (next.x - previous.x) / length;
+    const half = sampled[index]!.width / 2;
+    left.push({ x: sampled[index]!.x + nx * half, z: sampled[index]!.z + nz * half });
+    right.push({ x: sampled[index]!.x - nx * half, z: sampled[index]!.z - nz * half });
+  }
+  return { points: [...left, ...right.reverse()], surface: SurfaceId.Water, waterLevel: river.level };
+}
+
+/** Distance to the polygon outline, negative inside. */
+function polygonSignedDistance(x: number, z: number, polygon: Polygon): number {
+  let distance = Number.POSITIVE_INFINITY;
+  const points = polygon.points;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) distance = Math.min(distance, distanceToSegment(x, z, points[j]!, points[i]!));
+  return pointInPolygon(x, z, polygon) ? -distance : distance;
+}
+
+function baseHeightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
   const terrain = source.terrain;
   let height = terrain.baseHeight + terrain.noise.amplitude * fbm(noise, x, z, terrain.noise.frequency, terrain.noise.octaves);
   for (const mound of terrain.mounds) {
     const distance = Math.hypot(x - mound.x, z - mound.z);
     if (distance < mound.radius) height += mound.height * (1 - distance / mound.radius) ** 2;
   }
+  return height;
+}
+
+/** Water polygons without an authored level sit just below the mean terrain along their outline. */
+function waterLevelOf(source: SourceCourse, noise: SimplexNoise, polygon: Polygon): number {
+  if (polygon.waterLevel !== undefined) return polygon.waterLevel;
+  const mean = polygon.points.reduce((sum, point) => sum + baseHeightAt(source, noise, point.x, point.z), 0) / Math.max(1, polygon.points.length);
+  return mean - WATER_BANK;
+}
+
+/**
+ * Final terrain height: rolling base terrain, bunkers dished below a raised lip, and water bodies carved to a flat
+ * bed with banks that blend the surrounding ground down to the water level.
+ */
+function heightAt(source: SourceCourse, noise: SimplexNoise, water: { polygon: Polygon; level: number }[], x: number, z: number): number {
+  let height = baseHeightAt(source, noise, x, z);
   for (const polygon of source.features.bunkers) {
-    if (pointInPolygon(x, z, polygon)) height -= 0.4;
+    const distance = polygonSignedDistance(x, z, polygon);
+    if (distance < 0) height -= BUNKER_DEPTH * smoothstep(0, BUNKER_BLEND, -distance);
+    else if (distance < BUNKER_BLEND) height += BUNKER_LIP * (1 - smoothstep(0, BUNKER_BLEND, distance)) * smoothstep(-0.5, 0.8, distance);
   }
-  for (const polygon of source.features.water) {
-    if (pointInPolygon(x, z, polygon)) height -= 1;
+  for (const { polygon, level } of water) {
+    const distance = polygonSignedDistance(x, z, polygon);
+    if (distance >= WATER_BLEND) continue;
+    if (distance >= 0) {
+      height = (level + WATER_BANK) * (1 - smoothstep(0, WATER_BLEND, distance)) + height * smoothstep(0, WATER_BLEND, distance);
+    } else {
+      const bank = level + WATER_BANK;
+      const bed = level - WATER_BED;
+      height = bank + (bed - bank) * smoothstep(0, 4, -distance);
+    }
   }
   return height;
 }
@@ -236,12 +310,15 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
   const maskWidth = Math.round(source.map.width / source.maskCellSize) + 1;
   const maskDepth = Math.round(source.map.depth / source.maskCellSize) + 1;
   const noise = new SimplexNoise(source.terrain.noise.seed);
+  const waterPolygons = [...source.features.water, ...(source.rivers ?? []).map(riverPolygon)];
+  const features: CourseFeatures = { ...source.features, water: waterPolygons };
+  const water = waterPolygons.map((polygon) => ({ polygon, level: waterLevelOf(source, noise, polygon) }));
   const height = new Float32Array(width * depth);
   let minHeight = Number.POSITIVE_INFINITY;
   let maxHeight = Number.NEGATIVE_INFINITY;
   for (let iz = 0; iz < depth; iz += 1) {
     for (let ix = 0; ix < width; ix += 1) {
-      const value = heightAt(source, noise, ix * source.heightCellSize, iz * source.heightCellSize);
+      const value = heightAt(source, noise, water, ix * source.heightCellSize, iz * source.heightCellSize);
       height[iz * width + ix] = value;
       minHeight = Math.min(minHeight, value);
       maxHeight = Math.max(maxHeight, value);
@@ -250,7 +327,7 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
   if (source.terrain.greenFlatten) {
     for (const green of source.features.greens) {
       const target = green.points.reduce(
-        (sum, point) => sum + heightAt(source, noise, point.x, point.z),
+        (sum, point) => sum + heightAt(source, noise, water, point.x, point.z),
         0,
       ) / Math.max(1, green.points.length);
       for (let iz = 0; iz < depth; iz += 1) {
@@ -265,7 +342,7 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
   const surface = new Uint8Array(maskWidth * maskDepth);
   for (let iz = 0; iz < maskDepth; iz += 1) {
     for (let ix = 0; ix < maskWidth; ix += 1) {
-      surface[iz * maskWidth + ix] = classifySurface(ix * source.maskCellSize, iz * source.maskCellSize, source.features);
+      surface[iz * maskWidth + ix] = classifySurface(ix * source.maskCellSize, iz * source.maskCellSize, features);
     }
   }
   const manifest: CourseManifest = {
@@ -291,7 +368,11 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
       origin: { x: 0, z: 0 },
     },
     holes: source.holes,
-    features: { ...source.features, trees: [...source.features.trees, ...scatterTrees(source)] },
+    features: {
+      ...features,
+      water: water.map(({ polygon, level }) => ({ ...polygon, waterLevel: Math.round(level * 1000) / 1000 })),
+      trees: [...source.features.trees, ...scatterTrees({ ...source, features })],
+    },
     ...(source.environment ? { environment: source.environment } : {}),
   };
   return { manifest, height, surface };

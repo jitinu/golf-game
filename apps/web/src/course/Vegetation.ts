@@ -11,7 +11,11 @@ const NEAR_DISTANCE: Record<GraphicsPreset['treeDetail'], number> = { low: 25, m
 const LOD_REFRESH_SECONDS = 0.2;
 /** Each impostor atlas holds this many side views of the tree, spaced evenly around Y. */
 const IMPOSTOR_VIEWS = 8;
-const IMPOSTOR_VIEW_SIZE = new THREE.Vector2(256, 512);
+const IMPOSTOR_VIEW_SIZE: Record<GraphicsPreset['treeDetail'], THREE.Vector2> = {
+  low: new THREE.Vector2(192, 384),
+  medium: new THREE.Vector2(256, 512),
+  high: new THREE.Vector2(512, 1024),
+};
 /** Leaf cards are enlarged and thinned out so foliage reads as solid clumps instead of alpha speckle. */
 const LEAF_SIZE_BOOST = 1.45;
 const LEAF_COUNT_SCALE = 0.75;
@@ -66,7 +70,7 @@ function hash(value: number): number {
 type MeshDetail = GraphicsPreset['treeDetail'] | 'mid';
 
 function detailScale(detail: MeshDetail): { segments: number; leaves: number; leafSize: number } {
-  if (detail === 'mid') return { segments: 0.4, leaves: 0.3, leafSize: 1.6 };
+  if (detail === 'mid') return { segments: 0.45, leaves: 0.45, leafSize: 1.25 };
   if (detail === 'low') return { segments: 0.5, leaves: 0.55, leafSize: 1.2 };
   if (detail === 'medium') return { segments: 0.7, leaves: 0.8, leafSize: 1.05 };
   return { segments: 1, leaves: 1, leafSize: 1 };
@@ -97,7 +101,7 @@ function generateTree(kind: TreeKind, seed: number, detail: MeshDetail): { tree:
  * baked view best matches the direction the camera sees this tree from, so silhouettes change as the camera orbits.
  */
 function impostorMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
-  const material = new THREE.MeshBasicMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, transparent: false });
+  const material = new THREE.MeshBasicMaterial({ map, alphaTest: 0.35, side: THREE.DoubleSide, transparent: false });
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\nconst float IMPOSTOR_VIEWS = ${IMPOSTOR_VIEWS}.0;`)
@@ -129,6 +133,7 @@ export class Vegetation {
   private readonly windUniform = { value: 0 };
   private readonly billboardDistance: number;
   private readonly nearDistance: number;
+  private readonly impostorViewSize: THREE.Vector2;
   private readonly lastCamera = new THREE.Vector3(Number.NaN, 0, 0);
   private lodClock = 0;
   private readonly impostorScene = new THREE.Scene();
@@ -137,6 +142,9 @@ export class Vegetation {
   constructor(course: LoadedCourse, preset: GraphicsPreset, environment?: Environment, renderer?: THREE.WebGLRenderer) {
     this.billboardDistance = BILLBOARD_DISTANCE[preset.treeDetail];
     this.nearDistance = NEAR_DISTANCE[preset.treeDetail];
+    const maxTexture = renderer?.capabilities.maxTextureSize ?? 2048;
+    this.impostorViewSize = IMPOSTOR_VIEW_SIZE[preset.treeDetail].clone();
+    while (this.impostorViewSize.x * IMPOSTOR_VIEWS > maxTexture) this.impostorViewSize.multiplyScalar(0.5);
     const cardGeometry = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
     const trees = course.manifest.features.trees;
 
@@ -308,7 +316,8 @@ export class Vegetation {
     box: THREE.Box3,
     environment?: Environment,
   ): THREE.Texture {
-    const target = new THREE.WebGLRenderTarget(IMPOSTOR_VIEW_SIZE.x * IMPOSTOR_VIEWS, IMPOSTOR_VIEW_SIZE.y, {
+    const viewSize = this.impostorViewSize;
+    const target = new THREE.WebGLRenderTarget(viewSize.x * IMPOSTOR_VIEWS, viewSize.y, {
       format: THREE.RGBAFormat,
       type: THREE.HalfFloatType,
       colorSpace: THREE.LinearSRGBColorSpace,
@@ -344,7 +353,8 @@ export class Vegetation {
     const previousAutoClear = renderer.autoClear;
     renderer.shadowMap.enabled = false;
     renderer.setRenderTarget(target);
-    renderer.setClearColor(0x000000, 0);
+    // Transparent texels keep the foliage colour so mip blending at the silhouette does not darken to black.
+    renderer.setClearColor(leafSource.color, 0);
     renderer.clear();
     renderer.autoClear = false;
     for (let view = 0; view < IMPOSTOR_VIEWS; view++) {
@@ -352,7 +362,7 @@ export class Vegetation {
       camera.position.set(Math.sin(yaw) * width, 0, Math.cos(yaw) * width);
       camera.lookAt(0, 0, 0);
       camera.updateProjectionMatrix();
-      target.viewport.set(view * IMPOSTOR_VIEW_SIZE.x, 0, IMPOSTOR_VIEW_SIZE.x, IMPOSTOR_VIEW_SIZE.y);
+      target.viewport.set(view * viewSize.x, 0, viewSize.x, viewSize.y);
       renderer.setRenderTarget(target);
       renderer.render(scene, camera);
     }

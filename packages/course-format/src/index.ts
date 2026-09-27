@@ -60,6 +60,8 @@ export interface Spline {
 export interface Polygon {
   points: { x: number; z: number }[];
   surface: SurfaceId;
+  /** Water polygons only: absolute height of the water surface. */
+  waterLevel?: number;
 }
 
 export class Heightfield {

@@ -278,7 +278,8 @@ export function createTerrainMaterial(mask: THREE.DataTexture, maskOrigin: THREE
           // Slow macro variation so large areas do not read as one flat tone.
           float macro = 0.93 + 0.14 * terrainNoise(world * 0.035) * (0.5 + 0.5 * terrainNoise(world * 0.011 + 3.7));
           diffuseColor.rgb = albedoMix.rgb * stripeShade * macro * (1.0 - wet * 0.35);
-          terrainRoughness = nrMix.a * (1.0 - wet * 0.4);
+          // Turf and sand are matte; keep the authored roughness maps as variation on top of a high floor.
+          terrainRoughness = (0.72 + 0.28 * nrMix.a) * (1.0 - wet * 0.4);
           terrainNormal = normalize(nrMix.xyz * 2.0 - 1.0);
         }`,
       )
@@ -287,15 +288,21 @@ export function createTerrainMaterial(mask: THREE.DataTexture, maskOrigin: THREE
         '#include <normal_fragment_maps>',
         `#include <normal_fragment_maps>
         {
-          vec3 q0 = dFdx(vTerrainWorld);
-          vec3 q1 = dFdy(vTerrainWorld);
+          // View-space tangent frame from world xz derivatives (the detail maps tile in world xz).
+          vec3 q0 = dFdx(-vViewPosition);
+          vec3 q1 = dFdy(-vViewPosition);
           vec2 st0 = dFdx(vTerrainWorld.xz);
           vec2 st1 = dFdy(vTerrainWorld.xz);
           vec3 N = normalize(normal);
-          vec3 T = normalize(q0 * st1.y - q1 * st0.y);
-          vec3 B = -normalize(cross(N, T));
-          mat3 tbn = mat3(T, B, N);
-          normal = normalize(tbn * vec3(terrainNormal.xy * 0.7, terrainNormal.z));
+          vec3 q1perp = cross(q1, N);
+          vec3 q0perp = cross(N, q0);
+          vec3 T = q1perp * st0.x + q0perp * st1.x;
+          vec3 B = q1perp * st0.y + q0perp * st1.y;
+          float det = max(dot(T, T), dot(B, B));
+          float scale = det == 0.0 ? 0.0 : inversesqrt(det);
+          // Fade the detail normal out with distance so far turf does not sparkle.
+          float detailStrength = 0.7 * (1.0 - smoothstep(60.0, 220.0, length(vViewPosition)));
+          normal = normalize(T * (terrainNormal.x * detailStrength * scale) + B * (terrainNormal.y * detailStrength * scale) + N * terrainNormal.z);
         }`,
       );
   };
