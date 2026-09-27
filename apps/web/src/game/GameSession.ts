@@ -112,7 +112,14 @@ export class GameSession {
     } else {
       this.state.stroke += penalty ? 2 : 1;
       this.state.phase = 'aiming';
-      this.state.distanceToPin = this.holeController ? holeDistance(this.ballPosition, this.holeController.cup().position) : 0;
+      if (this.holeController) {
+        const cup = this.holeController.cup().position;
+        this.state.distanceToPin = holeDistance(this.ballPosition, cup);
+        this.aimYaw = computeAimYaw(this.ballPosition, cup);
+        this.state.aimYaw = this.aimYaw;
+        this.state.selectedClub = this.suggestClub();
+        this.selectedClub = this.state.selectedClub;
+      }
       this.state.message = penalty ? (resolved.record.result === 'water' ? 'Water hazard · one-stroke penalty' : 'Out of bounds · one-stroke penalty') : undefined;
     }
     this.notify();
