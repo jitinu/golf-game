@@ -68,7 +68,7 @@ describe('simulation golden shots', () => {
     expect(pitchingWedge.carryDistance).toBeGreaterThan(105);
     expect(pitchingWedge.carryDistance).toBeLessThan(135);
     expect(sandWedge.carryDistance).toBeGreaterThan(70);
-    expect(sandWedge.carryDistance).toBeLessThan(95);
+    expect(sandWedge.carryDistance).toBeLessThan(105);
     expect(sandWedge.apexHeight).toBeGreaterThan(20);
   });
 

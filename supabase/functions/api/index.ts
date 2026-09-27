@@ -38,8 +38,7 @@ function randomToken(): string {
 }
 
 async function clientIpHash(request: Request): Promise<string> {
-  const forwardedFor = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return sha256Hex(forwardedFor || 'unknown');
+  return sha256Hex(request.headers.get('x-forwarded-for') ?? 'unknown');
 }
 
 async function allowRequest(client: ApiClient, key: string): Promise<boolean> {
@@ -58,7 +57,7 @@ async function verifyTurnstile(token: unknown, request: Request): Promise<boolea
   const form = new FormData();
   form.set('secret', secret);
   form.set('response', token);
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  const ip = request.headers.get('x-forwarded-for');
   if (ip) form.set('remoteip', ip);
   const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
     method: 'POST',
@@ -175,14 +174,24 @@ async function leaderboard(request: Request, client: ApiClient): Promise<Respons
 async function stats(request: Request, client: ApiClient): Promise<Response> {
   const courseId = new URL(request.url).searchParams.get('courseId');
   if (!courseId) return errorResponse('courseId is required', 400);
-  const { data, error } = await client.rpc('course_stats_summary', { p_course_id: courseId });
-  if (error) return errorResponse('Unable to load stats', 500);
-  const summary = Array.isArray(data) ? data[0] : data;
+  const { data: courseStats, error: statsError } = await client
+    .from('course_stats')
+    .select('plays')
+    .eq('course_id', courseId)
+    .maybeSingle();
+  if (statsError) return errorResponse('Unable to load stats', 500);
+  const { data: scores, error: scoreError } = await client
+    .from('scores')
+    .select('total_strokes')
+    .eq('course_id', courseId);
+  if (scoreError) return errorResponse('Unable to load scores', 500);
+  const values = (scores ?? []).map((score) => score.total_strokes);
+  const total = values.reduce((sum, value) => sum + value, 0);
   return response({
     courseId,
-    plays: summary?.plays ?? 0,
-    bestScore: summary?.best_score ?? null,
-    averageScore: summary?.average_score ?? null,
+    plays: courseStats?.plays ?? 0,
+    bestScore: values.length ? Math.min(...values) : null,
+    averageScore: values.length ? total / values.length : null,
   });
 }
 
@@ -190,7 +199,7 @@ async function router(request: Request): Promise<Response> {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const client = getClient();
   const url = new URL(request.url);
-  const path = (url.pathname.replace(/\/+$/, '').replace(/^\/api/, '') || '/');
+  const path = url.pathname.replace(/\/+$/, '');
   try {
     if (request.method === 'POST' && path === '/v1/runs') return await createRun(request, client);
     const finishMatch = path.match(/^\/v1\/runs\/([^/]+)\/finish$/);
