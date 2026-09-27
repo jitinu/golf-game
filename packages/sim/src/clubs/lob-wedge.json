@@ -1,1 +1,1 @@
-{"id":"lob-wedge","displayName":"Lob Wedge","category":"wedge","loftDeg":60,"launchAngleDeg":38,"speedCurve":[[0,0],[0.5,23],[1,34]],"baseBackspinRpm":10800,"accuracyToSideSpinRpm":850,"accuracyToYawDeg":2,"dispersionDeg":0.8,"smashFactor":1.25,"maxCarryHintM":70}
+{"id":"lob-wedge","displayName":"Lob Wedge","category":"wedge","loftDeg":60,"launchAngleDeg":33,"speedCurve":[[0,0],[0.5,24],[1,34]],"baseBackspinRpm":11000,"accuracyToSideSpinRpm":850,"accuracyToYawDeg":2,"dispersionDeg":0.8,"smashFactor":1.25,"maxCarryHintM":70}

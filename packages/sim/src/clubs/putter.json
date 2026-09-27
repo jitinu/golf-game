@@ -1,1 +1,1 @@
-{"id":"putter","displayName":"Putter","category":"putter","loftDeg":3,"launchAngleDeg":1,"speedCurve":[[0,0],[0.5,3],[1,6]],"baseBackspinRpm":100,"accuracyToSideSpinRpm":20,"accuracyToYawDeg":1,"dispersionDeg":0.2,"smashFactor":1,"maxCarryHintM":8}
+{"id":"putter","displayName":"Putter","category":"putter","loftDeg":3,"launchAngleDeg":1,"speedCurve":[[0,0],[0.5,3],[1,6]],"baseBackspinRpm":0,"accuracyToSideSpinRpm":20,"accuracyToYawDeg":1,"dispersionDeg":0.2,"smashFactor":1,"maxCarryHintM":8}

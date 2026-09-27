@@ -1,1 +1,1 @@
-{"id":"7-iron","displayName":"7 Iron","category":"iron","loftDeg":31,"launchAngleDeg":24,"speedCurve":[[0,0],[0.5,35.5],[1,48.5]],"baseBackspinRpm":7000,"accuracyToSideSpinRpm":1250,"accuracyToYawDeg":2.5,"dispersionDeg":0.9,"smashFactor":1.35,"maxCarryHintM":150}
+{"id":"7-iron","displayName":"7 Iron","category":"iron","loftDeg":31,"launchAngleDeg":20,"speedCurve":[[0,0],[0.5,39],[1,54]],"baseBackspinRpm":7000,"accuracyToSideSpinRpm":1250,"accuracyToYawDeg":2.5,"dispersionDeg":0.9,"smashFactor":1.35,"maxCarryHintM":150}

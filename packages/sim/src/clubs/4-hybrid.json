@@ -1,1 +1,1 @@
-{"id":"4-hybrid","displayName":"4 Hybrid","category":"hybrid","loftDeg":22,"launchAngleDeg":20,"speedCurve":[[0,0],[0.5,41],[1,60]],"baseBackspinRpm":4800,"accuracyToSideSpinRpm":1500,"accuracyToYawDeg":3,"dispersionDeg":1.1,"smashFactor":1.4,"maxCarryHintM":185}
+{"id":"4-hybrid","displayName":"4 Hybrid","category":"hybrid","loftDeg":22,"launchAngleDeg":16,"speedCurve":[[0,0],[0.5,44],[1,64]],"baseBackspinRpm":5000,"accuracyToSideSpinRpm":1500,"accuracyToYawDeg":3,"dispersionDeg":1.1,"smashFactor":1.4,"maxCarryHintM":185}

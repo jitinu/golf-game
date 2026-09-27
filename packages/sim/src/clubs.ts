@@ -15,6 +15,8 @@ import lobWedge from './clubs/lob-wedge.json';
 import putter from './clubs/putter.json';
 import { SurfaceId, type BallState, type Vec3 } from './types.js';
 import type { Rng } from './rng.js';
+import { BALL } from './physics.js';
+import { vec } from './vec.js';
 
 export interface ClubDef {
   id: string;
@@ -24,7 +26,6 @@ export interface ClubDef {
   launchAngleDeg: number;
   speedCurve: [number, number][];
   baseBackspinRpm: number;
-  spinPerLaunchDeg?: number;
   accuracyToSideSpinRpm: number;
   accuracyToYawDeg: number;
   dispersionDeg: number;
@@ -79,10 +80,14 @@ export function shotToInitialState(
   const launch = club.launchAngleDeg * Math.PI / 180;
   const horizontal = speed * Math.cos(launch);
   const velocity = { x: horizontal * Math.sin(yaw), y: speed * Math.sin(launch), z: -horizontal * Math.cos(yaw) };
-  const sideSpin = accuracy * club.accuracyToSideSpinRpm * Math.PI / 30;
+  const sideSpin = -accuracy * club.accuracyToSideSpinRpm * Math.PI / 30;
   const backspin = club.baseBackspinRpm * Math.PI / 30;
-  const axis = { x: Math.cos(yaw), y: 0, z: Math.sin(yaw) };
-  const angularVelocity = { x: axis.x * (backspin + sideSpin), y: sideSpin * 0.05, z: axis.z * (backspin + sideSpin) };
+  const backspinAxis = { x: Math.cos(yaw), y: 0, z: Math.sin(yaw) };
+  const backspinVelocity = vec.scale(backspinAxis, backspin);
+  const rollingAxis = vec.normalize(vec.cross({ x: 0, y: 1, z: 0 }, velocity));
+  const angularVelocity = club.category === 'putter'
+    ? vec.scale(rollingAxis, vec.length(velocity) / BALL.radius)
+    : { x: backspinVelocity.x, y: sideSpin, z: backspinVelocity.z };
   return {
     position: { ...origin },
     velocity,

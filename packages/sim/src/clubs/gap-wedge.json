@@ -1,1 +1,1 @@
-{"id":"gap-wedge","displayName":"Gap Wedge","category":"wedge","loftDeg":50,"launchAngleDeg":32,"speedCurve":[[0,0],[0.5,27],[1,40]],"baseBackspinRpm":9600,"accuracyToSideSpinRpm":950,"accuracyToYawDeg":2.2,"dispersionDeg":0.8,"smashFactor":1.29,"maxCarryHintM":95}
+{"id":"gap-wedge","displayName":"Gap Wedge","category":"wedge","loftDeg":50,"launchAngleDeg":27,"speedCurve":[[0,0],[0.5,29],[1,42]],"baseBackspinRpm":9700,"accuracyToSideSpinRpm":950,"accuracyToYawDeg":2.2,"dispersionDeg":0.8,"smashFactor":1.29,"maxCarryHintM":95}
