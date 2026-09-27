@@ -20,6 +20,86 @@ interface Rig {
   socket: THREE.Object3D;
 }
 
+/** Bones the procedural clips drive, by Mixamo name without the `mixamorig` prefix. */
+const RIG_BONES = ['Hips', 'Spine', 'Neck', 'RightArm', 'LeftArm', 'RightForeArm', 'LeftForeArm', 'RightUpLeg', 'LeftUpLeg', 'RightLeg', 'LeftLeg'] as const;
+type RigBone = (typeof RIG_BONES)[number];
+
+/**
+ * Address-pose corrections applied on top of the procedural clips when an authored A-pose rig replaces the
+ * straight-limbed mannequin (which bakes its address stance into its rest pose): bring the arms in to the grip,
+ * flex the knees and tilt into the ball.
+ */
+const ADDRESS_OFFSET: Partial<Record<RigBone, [number, number, number]>> = {
+  LeftArm: [0, 0, -0.5],
+  RightArm: [0, 0, 0.5],
+  LeftUpLeg: [-0.2, 0, 0.05],
+  RightUpLeg: [-0.2, 0, -0.05],
+  LeftLeg: [0.35, 0, 0],
+  RightLeg: [0.35, 0, 0],
+};
+
+function stripPrefix(name: string): string {
+  return name.replace(/^mixamorig:?/, '');
+}
+
+function findBone(root: THREE.Object3D, bone: string): THREE.Object3D | undefined {
+  let found: THREE.Object3D | undefined;
+  root.traverse((object) => {
+    if (!found && stripPrefix(object.name) === bone) found = object;
+  });
+  return found;
+}
+
+/**
+ * Converts a clip authored in character space for the identity-rest mannequin into bone-local rotations for a
+ * skinned rig: `local = restLocal · restWorld⁻¹ · (D · offset) · restWorld`, so every delta still means "rotate
+ * this limb about the character's axes", whatever the rig's bone axes are.
+ */
+function retargetClip(clip: THREE.AnimationClip, root: THREE.Object3D): THREE.AnimationClip {
+  const rootWorld = new THREE.Quaternion();
+  root.updateWorldMatrix(true, true);
+  root.getWorldQuaternion(rootWorld);
+  const tracks: THREE.KeyframeTrack[] = [];
+  for (const track of clip.tracks) {
+    const match = /^(.*)\.quaternion$/.exec(track.name);
+    const bone = match ? findBone(root, stripPrefix(match[1]!)) : undefined;
+    if (!match || !bone || !(track instanceof THREE.QuaternionKeyframeTrack)) continue;
+    const restLocal = bone.quaternion.clone();
+    const restWorld = new THREE.Quaternion();
+    bone.getWorldQuaternion(restWorld).premultiply(rootWorld.clone().invert());
+    const restWorldInverse = restWorld.clone().invert();
+    const offsetEuler = ADDRESS_OFFSET[stripPrefix(match[1]!) as RigBone];
+    const offset = offsetEuler ? new THREE.Quaternion().setFromEuler(new THREE.Euler(...offsetEuler)) : new THREE.Quaternion();
+    const values = Array.from(track.values);
+    const delta = new THREE.Quaternion();
+    for (let index = 0; index < values.length; index += 4) {
+      delta.set(values[index]!, values[index + 1]!, values[index + 2]!, values[index + 3]!).multiply(offset);
+      const local = restLocal.clone().multiply(restWorldInverse).multiply(delta).multiply(restWorld);
+      values[index] = local.x;
+      values[index + 1] = local.y;
+      values[index + 2] = local.z;
+      values[index + 3] = local.w;
+    }
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${bone.name}.quaternion`, Array.from(track.times), values));
+  }
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
+
+/** Bones with an address offset that no clip animates (legs) get the offset baked into their pose once. */
+function applyStaticOffsets(root: THREE.Object3D, tracked: Set<string>): void {
+  const rootWorld = new THREE.Quaternion();
+  root.getWorldQuaternion(rootWorld);
+  for (const name of RIG_BONES) {
+    const offsetEuler = ADDRESS_OFFSET[name];
+    const bone = findBone(root, name);
+    if (!offsetEuler || !bone || tracked.has(name)) continue;
+    const restWorld = new THREE.Quaternion();
+    bone.getWorldQuaternion(restWorld).premultiply(rootWorld.clone().invert());
+    const offset = new THREE.Quaternion().setFromEuler(new THREE.Euler(...offsetEuler));
+    bone.quaternion.multiply(restWorld.clone().invert()).multiply(offset).multiply(restWorld);
+  }
+}
+
 function limb(material: THREE.Material, radius: number, length: number): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 10), material);
   mesh.position.y = -length / 2;
@@ -113,7 +193,7 @@ function proceduralGolfer(): Rig {
     const forearm = group.getObjectByName(`mixamorig${suffix}ForeArm`);
     const upLeg = group.getObjectByName(`mixamorig${suffix}UpLeg`);
     const leg = group.getObjectByName(`mixamorig${suffix}Leg`);
-    if (arm) arm.rotation.set(0.55, 0, suffix === 'Left' ? 0.28 : -0.28);
+    if (arm) arm.rotation.set(-0.6, 0, suffix === 'Left' ? -0.36 : 0.36);
     if (forearm) forearm.rotation.x = -0.15;
     if (upLeg) upLeg.rotation.x = -0.18;
     if (leg) leg.rotation.x = 0.35;
@@ -139,48 +219,58 @@ function swingClip(name: SwingType, amplitude: number): THREE.AnimationClip {
   const top = impact * 0.62;
   const times = [0, top, impact, Math.min(duration, impact + 0.25), duration];
   const a = amplitude;
+  // Character space: faces the ball (+Z), target to its left (+X). Negative X on an arm raises it toward the ball,
+  // negative Y on hips/spine turns the body away from the target (backswing), positive toward it.
+  const mix = (rest: number, swing: number): number => rest * (1 - a) + swing * a;
   return new THREE.AnimationClip(name, duration, [
     quaternionTrack('mixamorigHips', times, [
       [0, 0, 0],
-      [0, 0.45 * a, 0],
-      [0, -0.2 * a, 0],
-      [0, -0.9 * a, 0],
-      [0, -1.1 * a, 0],
+      [0, -0.4 * a, 0],
+      [0, 0.25 * a, 0],
+      [0, 0.8 * a, 0],
+      [0, 1.0 * a, 0],
     ]),
     quaternionTrack('mixamorigSpine', times, [
       [0.45, 0, 0],
-      [0.45, 1.3 * a, 0.05 * a],
-      [0.45, -0.1 * a, 0],
-      [0.4, -1.5 * a, -0.1 * a],
-      [0.3, -1.9 * a, -0.15 * a],
+      [0.42, -1.25 * a, -0.08 * a],
+      [0.45, 0.15 * a, 0.05 * a],
+      [0.35, 1.3 * a, 0.12 * a],
+      [0.2, 1.7 * a, 0.15 * a],
     ]),
     quaternionTrack('mixamorigRightArm', times, [
-      [0.55, 0, -0.28],
-      [-1.6 * a + 0.55 * (1 - a), 0.4 * a, -1.1 * a - 0.28 * (1 - a)],
-      [0.65, 0, -0.25],
-      [1.4 * a + 0.55 * (1 - a), -0.3 * a, 0.8 * a - 0.28 * (1 - a)],
-      [1.9 * a + 0.55 * (1 - a), -0.4 * a, 1.2 * a - 0.28 * (1 - a)],
+      [-0.6, 0, 0.36],
+      [mix(-0.6, -1.35), 0, mix(0.36, 0.2)],
+      [-0.65, 0, 0.35],
+      [mix(-0.6, -1.3), 0, mix(0.36, 0.7)],
+      [mix(-0.6, -1.5), 0, mix(0.36, 0.9)],
     ]),
     quaternionTrack('mixamorigLeftArm', times, [
-      [0.55, 0, 0.28],
-      [-1.4 * a + 0.55 * (1 - a), -0.2 * a, -0.6 * a + 0.28 * (1 - a)],
-      [0.65, 0, 0.25],
-      [1.5 * a + 0.55 * (1 - a), 0.4 * a, 1.3 * a + 0.28 * (1 - a)],
-      [2 * a + 0.55 * (1 - a), 0.5 * a, 1.6 * a + 0.28 * (1 - a)],
+      [-0.6, 0, -0.36],
+      [mix(-0.6, -1.45), 0, mix(-0.36, -0.55)],
+      [-0.65, 0, -0.35],
+      [mix(-0.6, -1.3), 0, mix(-0.36, 0.1)],
+      [mix(-0.6, -1.5), 0, mix(-0.36, 0.3)],
     ]),
     quaternionTrack('mixamorigRightForeArm', times, [
       [-0.15, 0, 0],
-      [-1.6 * a - 0.15 * (1 - a), 0, 0],
-      [-0.1, 0, 0],
-      [-0.3, 0, 0],
-      [-1.2 * a - 0.15 * (1 - a), 0, 0],
+      [mix(-0.15, -1.5), 0, 0],
+      [-0.12, 0, 0],
+      [-0.25, 0, 0],
+      [mix(-0.15, -0.6), 0, 0],
+    ]),
+    quaternionTrack('mixamorigLeftForeArm', times, [
+      [-0.15, 0, 0],
+      [-0.15, 0, 0],
+      [-0.12, 0, 0],
+      [mix(-0.15, -0.7), 0, 0],
+      [mix(-0.15, -1.3), 0, 0],
     ]),
     quaternionTrack('mixamorigNeck', times, [
-      [0, 0, 0],
-      [0, -0.35 * a, 0],
-      [0, 0, 0],
-      [0, 0.4 * a, 0],
-      [-0.4 * a, 1 * a, 0],
+      [0.5, 0, 0],
+      [0.5, 0.3 * a, 0],
+      [0.5, 0, 0],
+      [0.3, -0.4 * a, 0],
+      [-0.1 * a, -1.0 * a, 0],
     ]),
   ]);
 }
@@ -190,22 +280,28 @@ function celebrateClip(): THREE.AnimationClip {
   const times = [0, duration * 0.3, duration * 0.6, duration];
   return new THREE.AnimationClip('celebrate', duration, [
     quaternionTrack('mixamorigRightArm', times, [
-      [0.55, 0, -0.28],
-      [-2.8, 0, -0.5],
-      [-2.9, 0, -0.3],
-      [0.55, 0, -0.28],
-    ]),
-    quaternionTrack('mixamorigLeftArm', times, [
-      [0.55, 0, 0.28],
+      [-0.6, 0, 0.36],
       [-2.8, 0, 0.5],
       [-2.9, 0, 0.3],
-      [0.55, 0, 0.28],
+      [-0.6, 0, 0.36],
+    ]),
+    quaternionTrack('mixamorigLeftArm', times, [
+      [-0.6, 0, -0.36],
+      [-2.8, 0, -0.5],
+      [-2.9, 0, -0.3],
+      [-0.6, 0, -0.36],
     ]),
     quaternionTrack('mixamorigSpine', times, [
       [0.45, 0, 0],
       [-0.1, 0, 0],
       [-0.15, 0, 0],
       [0.45, 0, 0],
+    ]),
+    quaternionTrack('mixamorigNeck', times, [
+      [0.5, 0, 0],
+      [-0.3, 0, 0],
+      [-0.3, 0, 0],
+      [0.5, 0, 0],
     ]),
   ]);
 }
@@ -238,20 +334,53 @@ export class Golfer {
       .catch(() => undefined);
   }
 
-  /** Replace the mannequin with an authored GLB whose skeleton exposes a `ClubSocket` node and Mixamo clip names. */
+  /**
+   * Replace the mannequin with an authored GLB on a Mixamo-named skeleton (with or without the `mixamorig` prefix).
+   * Authored clips win by name; missing ones are retargeted from the procedural set so any humanoid rig swings.
+   */
   private adoptModel(scene: THREE.Group, animations: THREE.AnimationClip[]): void {
-    const socket = scene.getObjectByName('ClubSocket') ?? scene.getObjectByName('mixamorigRightHand');
+    const rightHand = findBone(scene, 'RightHand');
+    let socket = scene.getObjectByName('ClubSocket');
+    if (!socket && rightHand) {
+      scene.updateWorldMatrix(true, true);
+      socket = new THREE.Object3D();
+      socket.name = 'ClubSocket';
+      const handWorld = new THREE.Quaternion();
+      rightHand.getWorldQuaternion(handWorld);
+      const sceneWorld = new THREE.Quaternion();
+      scene.getWorldQuaternion(sceneWorld);
+      // Socket axes match the character's at rest so the club hangs straight down, then a slight forward lean of the shaft.
+      socket.quaternion.copy(handWorld.invert().multiply(sceneWorld)).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.15, 0, 0)));
+      socket.position.set(0, -0.04, 0.02);
+      rightHand.add(socket);
+    }
     if (!socket) return;
     this.mixer.stopAllAction();
     this.group.remove(this.rig.group);
     scene.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.castShadow = true;
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+        object.frustumCulled = false;
+      }
     });
+    const authored = new Set(animations.map((clip) => clip.name));
+    const tracked = new Set<string>();
+    for (const [name, clip] of this.clips) {
+      if (authored.has(name)) continue;
+      const retargeted = retargetClip(clip, scene);
+      retargeted.tracks.forEach((track) => tracked.add(stripPrefix(track.name.replace(/\.quaternion$/, ''))));
+      this.clips.set(name, retargeted);
+    }
+    if (!authored.has('swing_full')) applyStaticOffsets(scene, tracked);
+    animations.forEach((clip) => this.clips.set(clip.name, clip));
     this.rig = { group: scene, socket };
     this.group.add(scene);
     this.mixer = new THREE.AnimationMixer(scene);
-    animations.forEach((clip) => this.clips.set(clip.name, clip));
-    if (this.clubDef) this.setClub(this.clubDef);
+    this.mixer.clipAction(this.clips.get('swing_full')!).play().paused = true;
+    if (this.club) {
+      this.rig.socket.add(this.club);
+    }
   }
 
   setClub(club: ClubDef): void {
@@ -273,7 +402,7 @@ export class Golfer {
     const rightX = -forwardZ;
     const rightZ = forwardX;
     this.group.position.set(ball.x - rightX * STANCE_OFFSET, ball.y - BALL_RADIUS, ball.z - rightZ * STANCE_OFFSET);
-    this.group.rotation.y = yaw + Math.PI / 2;
+    this.group.rotation.y = Math.PI / 2 - yaw;
   }
 
   /** Resolves at the clip's impact time so the ball launches on the exact frame the club reaches it. */

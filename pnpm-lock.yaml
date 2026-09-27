@@ -44,6 +44,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@dgreenheck/ez-tree':
+        specifier: 1.1.0
+        version: 1.1.0(three@0.170.0)
       '@golf/course-format':
         specifier: workspace:*
         version: link:../../packages/course-format
@@ -103,6 +106,11 @@ importers:
         version: link:../../packages/sim
 
 packages:
+
+  '@dgreenheck/ez-tree@1.1.0':
+    resolution: {integrity: sha512-6pvS6hD6B6h00dm0SnkgYeT4ABU5Y1Z9M44p1tXiV5C0eKrQy2sKECXshoaUv0qAOqYVL68w/PwadUxDFDiHUg==}
+    peerDependencies:
+      three: '>=0.167'
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1444,6 +1452,10 @@ packages:
     engines: {node: '>=10'}
 
 snapshots:
+
+  '@dgreenheck/ez-tree@1.1.0(three@0.170.0)':
+    dependencies:
+      three: 0.170.0
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true

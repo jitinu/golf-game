@@ -7,6 +7,7 @@ import type { GraphicsPreset } from '../app/GraphicsPreset.js';
 
 export class Environment {
   readonly csm: CSM;
+  private readonly hemisphere: THREE.HemisphereLight;
   private readonly pmrem: THREE.PMREMGenerator;
   private readonly patched = new WeakSet<THREE.Material>();
 
@@ -18,18 +19,25 @@ export class Environment {
     renderer?: THREE.WebGLRenderer,
   ) {
     this.pmrem = new THREE.PMREMGenerator(renderer ?? new THREE.WebGLRenderer({ antialias: false }));
+    // CSM wants the direction light travels, i.e. from the sun down into the scene.
     this.csm = new CSM({
       camera,
       cascades: preset.cascades,
       shadowMapSize: 2048,
       mode: 'practical',
       maxFar: 350,
-      lightIntensity: 2.5,
-      lightDirection: this.sunDirection(manifest),
+      lightIntensity: 3.2,
+      lightDirection: this.sunDirection(manifest).negate(),
       parent: scene,
     });
-    scene.fog = new THREE.FogExp2(0x9bb5c4, 0.0009);
-    scene.add(new THREE.HemisphereLight(0xbfd6df, 0x40513a, 1.1));
+    for (const light of this.csm.lights) {
+      light.color.set(0xfff1dc);
+      light.shadow.normalBias = 0.04;
+      light.shadow.bias = -0.0002;
+    }
+    scene.fog = new THREE.FogExp2(0xc7d6de, 0.0011);
+    this.hemisphere = new THREE.HemisphereLight(0xbfd6df, 0x50603f, 1.1);
+    scene.add(this.hemisphere);
     void this.loadSky(manifest, preset);
   }
 
@@ -66,7 +74,12 @@ export class Environment {
       texture.mapping = THREE.EquirectangularReflectionMapping;
       const generated = this.pmrem.fromEquirectangular(texture).texture;
       this.scene.environment = generated;
+      this.scene.environmentIntensity = 0.55;
       this.scene.background = texture;
+      this.scene.backgroundIntensity = 0.9;
+      this.scene.backgroundBlurriness = 0;
+      // Image-based light replaces most of the ambient fill.
+      this.hemisphere.intensity = 0.25;
     } catch {
       const environment = new RoomEnvironment();
       const generated = this.pmrem.fromScene(environment).texture;

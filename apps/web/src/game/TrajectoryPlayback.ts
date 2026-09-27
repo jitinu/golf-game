@@ -26,6 +26,10 @@ export class TrajectoryPlayback {
     return this.trajectory.length === 0 || this.index >= this.trajectory.length - 1;
   }
 
+  get state(): BallState | undefined {
+    return this.trajectory[this.index];
+  }
+
   get position(): { x: number; y: number; z: number } {
     const current = this.trajectory[this.index];
     const next = this.trajectory[Math.min(this.index + 1, this.trajectory.length - 1)];

@@ -14,6 +14,21 @@ export interface SourceCourse extends Omit<CourseManifest, 'heightfield' | 'surf
   map: { width: number; depth: number };
   heightCellSize: number;
   maskCellSize: number;
+  /** Deterministic tree belts along the holes, appended to the hand-placed `features.trees`. */
+  treeScatter?: TreeScatter;
+}
+
+export interface TreeScatter {
+  seed: number;
+  /** Grid pitch of candidate positions in metres; each is jittered by up to half a cell. */
+  spacing: number;
+  /** Fraction of candidates kept (0–1). */
+  density: number;
+  /** Trees stand at least this far outside the fairway/first-cut edge and green polygons. */
+  minPlayDistance: number;
+  /** Candidates further than this from any hole are dropped so belts hug the holes. */
+  maxPlayDistance: number;
+  kinds: { kind: string; weight: number; scale: [number, number] }[];
 }
 
 class SimplexNoise {
@@ -162,6 +177,59 @@ function heightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: numbe
   return height;
 }
 
+function hash2(seed: number, x: number, z: number): number {
+  let h = Math.imul(seed ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(x + 0x1000, 0xc2b2ae35) ^ Math.imul(z + 0x2000, 0x27d4eb2f);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
+}
+
+function polygonDistance(x: number, z: number, polygon: Polygon): number {
+  if (pointInPolygon(x, z, polygon)) return 0;
+  let distance = Number.POSITIVE_INFINITY;
+  const points = polygon.points;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) distance = Math.min(distance, distanceToSegment(x, z, points[j]!, points[i]!));
+  return distance;
+}
+
+/** Distance from the nearest in-play area (fairway incl. first cut, greens, tees). */
+function playDistance(x: number, z: number, source: SourceCourse): number {
+  let distance = Number.POSITIVE_INFINITY;
+  for (const spline of source.features.fairways) {
+    const edge = Math.max(...spline.widths, 1) / 2 + (spline.edgeWidth ?? 0);
+    distance = Math.min(distance, splineDistance(x, z, spline) - edge);
+  }
+  for (const polygon of [...source.features.greens, ...source.features.bunkers]) distance = Math.min(distance, polygonDistance(x, z, polygon));
+  for (const hole of source.holes) for (const tee of hole.tees) distance = Math.min(distance, Math.hypot(x - tee.position.x, z - tee.position.z) - 8);
+  return distance;
+}
+
+export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
+  const scatter = source.treeScatter;
+  if (!scatter || scatter.kinds.length === 0) return [];
+  const totalWeight = scatter.kinds.reduce((sum, kind) => sum + kind.weight, 0);
+  const trees: CourseFeatures['trees'] = [];
+  const columns = Math.floor(source.map.width / scatter.spacing);
+  const rows = Math.floor(source.map.depth / scatter.spacing);
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      if (hash2(scatter.seed, column, row) > scatter.density) continue;
+      const x = (column + 0.5 + (hash2(scatter.seed + 1, column, row) - 0.5)) * scatter.spacing;
+      const z = (row + 0.5 + (hash2(scatter.seed + 2, column, row) - 0.5)) * scatter.spacing;
+      if (x < 6 || z < 6 || x > source.map.width - 6 || z > source.map.depth - 6) continue;
+      const surface = classifySurface(x, z, source.features);
+      if (surface !== SurfaceId.Rough && surface !== SurfaceId.OutOfBounds) continue;
+      const distance = playDistance(x, z, source);
+      if (distance < scatter.minPlayDistance || distance > scatter.maxPlayDistance) continue;
+      let pick = hash2(scatter.seed + 3, column, row) * totalWeight;
+      const kind = scatter.kinds.find((candidate) => (pick -= candidate.weight) <= 0) ?? scatter.kinds[scatter.kinds.length - 1]!;
+      const scale = kind.scale[0] + (kind.scale[1] - kind.scale[0]) * hash2(scatter.seed + 4, column, row);
+      trees.push({ position: { x, y: 0, z }, kind: kind.kind, scale: Math.round(scale * 100) / 100, rotation: Math.round(hash2(scatter.seed + 5, column, row) * Math.PI * 2 * 100) / 100 });
+    }
+  }
+  return trees;
+}
+
 export function buildCourse(source: SourceCourse): { manifest: CourseManifest; height: Float32Array; surface: Uint8Array } {
   const width = Math.round(source.map.width / source.heightCellSize) + 1;
   const depth = Math.round(source.map.depth / source.heightCellSize) + 1;
@@ -223,7 +291,7 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
       origin: { x: 0, z: 0 },
     },
     holes: source.holes,
-    features: source.features,
+    features: { ...source.features, trees: [...source.features.trees, ...scatterTrees(source)] },
     ...(source.environment ? { environment: source.environment } : {}),
   };
   return { manifest, height, surface };
