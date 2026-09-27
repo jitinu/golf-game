@@ -37,8 +37,10 @@ export class HoleController {
     }, { record: true, maxTime: 15 });
     const terminal = result.final;
     const lastSafe = [...result.trajectory].reverse().find((state) => state.surface === SurfaceId.Fairway || state.surface === SurfaceId.Rough || state.surface === SurfaceId.FirstCut)?.position ?? from;
-    const drop = result.events.some((event) => event.type === 'water') ? lastSafe : from;
-    const outcome = result.events.some((event) => event.type === 'water') ? 'water' : result.events.some((event) => event.type === 'oob') ? 'oob' : result.holed ? 'holed' : 'flight';
+    const water = result.events.some((event) => event.type === 'water');
+    const oob = result.events.some((event) => event.type === 'oob');
+    const drop = water ? lastSafe : oob ? from : terminal.position;
+    const outcome = water ? 'water' : oob ? 'oob' : result.holed ? 'holed' : 'flight';
     return {
       result,
       trajectory: result.trajectory,
