@@ -91,7 +91,7 @@ export class App {
       const group = new THREE.Group();
       const terrain = new TerrainMesh(this.session.course, this.environment);
       group.add(terrain.mesh);
-      const grass = new GrassField(this.session.course, this.preset, this.renderer.scene.fog instanceof THREE.FogExp2 ? this.renderer.scene.fog : undefined);
+      const grass = new GrassField(this.session.course, this.preset, this.renderer.scene.fog instanceof THREE.FogExp2 ? this.renderer.scene.fog : undefined, this.environment.sunDirection);
       group.add(grass.group);
       const vegetation = new Vegetation(this.session.course, this.preset, this.environment, this.renderer.renderer);
       group.add(vegetation.group);
@@ -130,7 +130,7 @@ export class App {
     this.environment = new Environment(this.renderer.scene, this.renderer.camera, this.session.course.manifest, this.preset, this.renderer.renderer);
     this.ball = new BallView(this.environment);
     this.renderer.scene.add(this.ball.group);
-    this.golfer = new Golfer(this.renderer.renderer);
+    this.golfer = new Golfer(this.renderer.renderer, this.environment);
     this.renderer.scene.add(this.golfer.group);
     this.camera = new CameraController(this.renderer.camera, (x, z) => this.session.course?.sampler.heightAt(x, z) ?? 0);
     this.aimLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0xe8fff0, dashSize: 0.6, gapSize: 0.4 }));

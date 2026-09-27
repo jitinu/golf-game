@@ -5,8 +5,17 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { CourseManifest } from '@golf/course-format';
 import type { GraphicsPreset } from '../app/GraphicsPreset.js';
 
+function computeSunDirection(manifest: CourseManifest): THREE.Vector3 {
+  const environment = manifest.environment;
+  const azimuth = THREE.MathUtils.degToRad(environment?.sunAzimuthDeg ?? 135);
+  const elevation = THREE.MathUtils.degToRad(environment?.sunElevationDeg ?? 45);
+  return new THREE.Vector3(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), Math.cos(azimuth) * Math.cos(elevation)).normalize();
+}
+
 export class Environment {
   readonly csm: CSM;
+  /** Unit vector pointing from the scene toward the sun. */
+  readonly sunDirection: THREE.Vector3;
   private readonly hemisphere: THREE.HemisphereLight;
   private readonly pmrem: THREE.PMREMGenerator;
   private readonly patched = new WeakSet<THREE.Material>();
@@ -19,6 +28,7 @@ export class Environment {
     renderer?: THREE.WebGLRenderer,
   ) {
     this.pmrem = new THREE.PMREMGenerator(renderer ?? new THREE.WebGLRenderer({ antialias: false }));
+    this.sunDirection = computeSunDirection(manifest);
     // CSM wants the direction light travels, i.e. from the sun down into the scene.
     this.csm = new CSM({
       camera,
@@ -27,7 +37,7 @@ export class Environment {
       mode: 'practical',
       maxFar: 350,
       lightIntensity: 3.2,
-      lightDirection: this.sunDirection(manifest).negate(),
+      lightDirection: this.sunDirection.clone().negate(),
       parent: scene,
     });
     for (const light of this.csm.lights) {
@@ -35,7 +45,7 @@ export class Environment {
       light.shadow.normalBias = 0.04;
       light.shadow.bias = -0.0002;
     }
-    scene.fog = new THREE.FogExp2(0xc7d6de, 0.0011);
+    scene.fog = new THREE.FogExp2(0xbccbd4, 0.00045);
     this.hemisphere = new THREE.HemisphereLight(0xbfd6df, 0x50603f, 1.1);
     scene.add(this.hemisphere);
     void this.loadSky(manifest, preset);
@@ -55,13 +65,6 @@ export class Environment {
       csmCompile(shader, renderer);
       customCompile(shader, renderer);
     };
-  }
-
-  private sunDirection(manifest: CourseManifest): THREE.Vector3 {
-    const environment = manifest.environment;
-    const azimuth = THREE.MathUtils.degToRad(environment?.sunAzimuthDeg ?? 135);
-    const elevation = THREE.MathUtils.degToRad(environment?.sunElevationDeg ?? 45);
-    return new THREE.Vector3(Math.sin(azimuth) * Math.cos(elevation), Math.sin(elevation), Math.cos(azimuth) * Math.cos(elevation)).normalize();
   }
 
   private async loadSky(manifest: CourseManifest, preset: GraphicsPreset): Promise<void> {

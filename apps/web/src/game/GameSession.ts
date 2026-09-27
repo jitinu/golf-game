@@ -56,6 +56,7 @@ export class GameSession {
     const hole = this.course.manifest.holes[this.state.hole - 1];
     const cup = this.holeController.cup();
     this.state.par = hole?.par ?? 4;
+    this.state.wind = { x: this.holeController.wind.x, z: this.holeController.wind.z };
     this.state.distanceToPin = holeDistance(this.ballPosition, cup.position);
     this.state.selectedClub = this.suggestClub();
     this.selectedClub = this.state.selectedClub;
