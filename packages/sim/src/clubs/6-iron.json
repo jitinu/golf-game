@@ -1,0 +1,1 @@
+{"id":"6-iron","displayName":"6 Iron","category":"iron","loftDeg":27,"launchAngleDeg":22,"speedCurve":[[0,0],[0.5,38],[1,54]],"baseBackspinRpm":6500,"accuracyToSideSpinRpm":1300,"accuracyToYawDeg":2.6,"dispersionDeg":1,"smashFactor":1.36,"maxCarryHintM":160}

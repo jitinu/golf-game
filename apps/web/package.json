@@ -1,0 +1,9 @@
+{
+  "name": "@golf/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "vite build", "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": { "@golf/course-format": "workspace:*", "@golf/protocol": "workspace:*", "@golf/sim": "workspace:*", "three": "^0.170.0" },
+  "devDependencies": { "@types/three": "^0.170.0", "@vitejs/plugin-basic-ssl": "^1.1.0", "vite": "^6.0.7" }
+}

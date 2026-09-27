@@ -1,0 +1,1 @@
+{"id":"4-iron","displayName":"4 Iron","category":"iron","loftDeg":21,"launchAngleDeg":18,"speedCurve":[[0,0],[0.5,40],[1,58]],"baseBackspinRpm":5500,"accuracyToSideSpinRpm":1400,"accuracyToYawDeg":2.8,"dispersionDeg":1,"smashFactor":1.38,"maxCarryHintM":180}

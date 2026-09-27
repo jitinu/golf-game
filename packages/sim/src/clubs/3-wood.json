@@ -1,0 +1,1 @@
+{"id":"3-wood","displayName":"3 Wood","category":"wood","loftDeg":15,"launchAngleDeg":15,"speedCurve":[[0,0],[0.5,47],[1,69]],"baseBackspinRpm":3500,"accuracyToSideSpinRpm":1700,"accuracyToYawDeg":3,"dispersionDeg":1.2,"smashFactor":1.45,"maxCarryHintM":225}

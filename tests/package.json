@@ -1,0 +1,10 @@
+{
+  "name": "@golf/tests",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@golf/course-format": "workspace:*",
+    "@golf/protocol": "workspace:*",
+    "@golf/sim": "workspace:*"
+  }
+}

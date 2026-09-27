@@ -1,0 +1,1 @@
+{"id":"pitching-wedge","displayName":"Pitching Wedge","category":"wedge","loftDeg":45,"launchAngleDeg":30,"speedCurve":[[0,0],[0.5,29],[1,43]],"baseBackspinRpm":9000,"accuracyToSideSpinRpm":1000,"accuracyToYawDeg":2.2,"dispersionDeg":0.8,"smashFactor":1.3,"maxCarryHintM":110}

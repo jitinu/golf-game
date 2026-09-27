@@ -1,0 +1,1 @@
+{"id":"sand-wedge","displayName":"Sand Wedge","category":"wedge","loftDeg":56,"launchAngleDeg":35,"speedCurve":[[0,0],[0.5,25],[1,37]],"baseBackspinRpm":10500,"accuracyToSideSpinRpm":900,"accuracyToYawDeg":2,"dispersionDeg":0.8,"smashFactor":1.27,"maxCarryHintM":80}

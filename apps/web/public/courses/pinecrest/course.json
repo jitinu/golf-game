@@ -1,0 +1,644 @@
+{
+  "courseId": "pinecrest",
+  "courseVersion": 1,
+  "physicsVersion": 1,
+  "name": "Pinecrest",
+  "description": "A rolling parkland course through the pines.",
+  "heightfield": {
+    "width": 301,
+    "depth": 451,
+    "cellSize": 2,
+    "origin": {
+      "x": 0,
+      "z": 0
+    },
+    "minHeight": 10.56032315052776,
+    "maxHeight": 14.548534152144486,
+    "file": "terrain.height.f32"
+  },
+  "surfaceMask": {
+    "file": "surface.u8",
+    "width": 601,
+    "depth": 901,
+    "cellSize": 1,
+    "origin": {
+      "x": 0,
+      "z": 0
+    }
+  },
+  "holes": [
+    {
+      "number": 1,
+      "par": 4,
+      "tees": [
+        {
+          "id": "back",
+          "position": {
+            "x": 300,
+            "y": 0,
+            "z": 45
+          }
+        },
+        {
+          "id": "middle",
+          "position": {
+            "x": 300,
+            "y": 0,
+            "z": 65
+          }
+        },
+        {
+          "id": "front",
+          "position": {
+            "x": 300,
+            "y": 0,
+            "z": 80
+          }
+        }
+      ],
+      "cup": {
+        "x": 300,
+        "y": 0,
+        "z": 385
+      },
+      "greenCenter": {
+        "x": 300,
+        "y": 0,
+        "z": 385
+      },
+      "cameraHint": {
+        "x": 350,
+        "y": 80,
+        "z": 180
+      }
+    },
+    {
+      "number": 2,
+      "par": 3,
+      "tees": [
+        {
+          "id": "back",
+          "position": {
+            "x": 115,
+            "y": 0,
+            "z": 430
+          }
+        },
+        {
+          "id": "middle",
+          "position": {
+            "x": 115,
+            "y": 0,
+            "z": 445
+          }
+        },
+        {
+          "id": "front",
+          "position": {
+            "x": 115,
+            "y": 0,
+            "z": 460
+          }
+        }
+      ],
+      "cup": {
+        "x": 115,
+        "y": 0,
+        "z": 600
+      },
+      "greenCenter": {
+        "x": 115,
+        "y": 0,
+        "z": 600
+      },
+      "cameraHint": {
+        "x": 170,
+        "y": 70,
+        "z": 515
+      }
+    },
+    {
+      "number": 3,
+      "par": 5,
+      "tees": [
+        {
+          "id": "back",
+          "position": {
+            "x": 465,
+            "y": 0,
+            "z": 585
+          }
+        },
+        {
+          "id": "middle",
+          "position": {
+            "x": 465,
+            "y": 0,
+            "z": 605
+          }
+        },
+        {
+          "id": "front",
+          "position": {
+            "x": 465,
+            "y": 0,
+            "z": 620
+          }
+        }
+      ],
+      "cup": {
+        "x": 470,
+        "y": 0,
+        "z": 900
+      },
+      "greenCenter": {
+        "x": 470,
+        "y": 0,
+        "z": 900
+      },
+      "cameraHint": {
+        "x": 530,
+        "y": 90,
+        "z": 730
+      }
+    }
+  ],
+  "features": {
+    "fairways": [
+      {
+        "points": [
+          {
+            "x": 300,
+            "z": 55
+          },
+          {
+            "x": 280,
+            "z": 180
+          },
+          {
+            "x": 320,
+            "z": 300
+          },
+          {
+            "x": 300,
+            "z": 370
+          }
+        ],
+        "widths": [
+          34,
+          44,
+          42,
+          36
+        ],
+        "surface": 1,
+        "edgeSurface": 2,
+        "edgeWidth": 10
+      },
+      {
+        "points": [
+          {
+            "x": 115,
+            "z": 445
+          },
+          {
+            "x": 160,
+            "z": 505
+          },
+          {
+            "x": 120,
+            "z": 570
+          },
+          {
+            "x": 115,
+            "z": 590
+          }
+        ],
+        "widths": [
+          30,
+          38,
+          34,
+          34
+        ],
+        "surface": 1,
+        "edgeSurface": 2,
+        "edgeWidth": 8
+      },
+      {
+        "points": [
+          {
+            "x": 465,
+            "z": 600
+          },
+          {
+            "x": 420,
+            "z": 710
+          },
+          {
+            "x": 500,
+            "z": 820
+          },
+          {
+            "x": 470,
+            "z": 890
+          }
+        ],
+        "widths": [
+          40,
+          48,
+          46,
+          38
+        ],
+        "surface": 1,
+        "edgeSurface": 2,
+        "edgeWidth": 10
+      }
+    ],
+    "greens": [
+      {
+        "points": [
+          {
+            "x": 268,
+            "z": 365
+          },
+          {
+            "x": 332,
+            "z": 365
+          },
+          {
+            "x": 340,
+            "z": 410
+          },
+          {
+            "x": 300,
+            "z": 430
+          },
+          {
+            "x": 260,
+            "z": 410
+          }
+        ],
+        "surface": 0
+      },
+      {
+        "points": [
+          {
+            "x": 88,
+            "z": 580
+          },
+          {
+            "x": 140,
+            "z": 575
+          },
+          {
+            "x": 150,
+            "z": 620
+          },
+          {
+            "x": 105,
+            "z": 635
+          },
+          {
+            "x": 80,
+            "z": 610
+          }
+        ],
+        "surface": 0
+      },
+      {
+        "points": [
+          {
+            "x": 435,
+            "z": 875
+          },
+          {
+            "x": 500,
+            "z": 872
+          },
+          {
+            "x": 520,
+            "z": 905
+          },
+          {
+            "x": 450,
+            "z": 925
+          },
+          {
+            "x": 420,
+            "z": 900
+          }
+        ],
+        "surface": 0
+      }
+    ],
+    "bunkers": [
+      {
+        "points": [
+          {
+            "x": 245,
+            "z": 320
+          },
+          {
+            "x": 270,
+            "z": 310
+          },
+          {
+            "x": 285,
+            "z": 330
+          },
+          {
+            "x": 260,
+            "z": 345
+          }
+        ],
+        "surface": 4
+      },
+      {
+        "points": [
+          {
+            "x": 330,
+            "z": 390
+          },
+          {
+            "x": 355,
+            "z": 380
+          },
+          {
+            "x": 365,
+            "z": 405
+          },
+          {
+            "x": 340,
+            "z": 415
+          }
+        ],
+        "surface": 4
+      },
+      {
+        "points": [
+          {
+            "x": 145,
+            "z": 540
+          },
+          {
+            "x": 170,
+            "z": 545
+          },
+          {
+            "x": 165,
+            "z": 568
+          },
+          {
+            "x": 140,
+            "z": 562
+          }
+        ],
+        "surface": 4
+      },
+      {
+        "points": [
+          {
+            "x": 430,
+            "z": 820
+          },
+          {
+            "x": 455,
+            "z": 810
+          },
+          {
+            "x": 470,
+            "z": 830
+          },
+          {
+            "x": 445,
+            "z": 845
+          }
+        ],
+        "surface": 4
+      }
+    ],
+    "water": [
+      {
+        "points": [
+          {
+            "x": 45,
+            "z": 490
+          },
+          {
+            "x": 95,
+            "z": 475
+          },
+          {
+            "x": 125,
+            "z": 500
+          },
+          {
+            "x": 105,
+            "z": 540
+          },
+          {
+            "x": 55,
+            "z": 535
+          }
+        ],
+        "surface": 5
+      }
+    ],
+    "outOfBounds": [
+      {
+        "points": [
+          {
+            "x": 0,
+            "z": 0
+          },
+          {
+            "x": 600,
+            "z": 0
+          },
+          {
+            "x": 600,
+            "z": 4
+          },
+          {
+            "x": 0,
+            "z": 4
+          }
+        ],
+        "surface": 8
+      },
+      {
+        "points": [
+          {
+            "x": 0,
+            "z": 896
+          },
+          {
+            "x": 600,
+            "z": 896
+          },
+          {
+            "x": 600,
+            "z": 900
+          },
+          {
+            "x": 0,
+            "z": 900
+          }
+        ],
+        "surface": 8
+      },
+      {
+        "points": [
+          {
+            "x": 0,
+            "z": 0
+          },
+          {
+            "x": 4,
+            "z": 0
+          },
+          {
+            "x": 4,
+            "z": 900
+          },
+          {
+            "x": 0,
+            "z": 900
+          }
+        ],
+        "surface": 8
+      },
+      {
+        "points": [
+          {
+            "x": 596,
+            "z": 0
+          },
+          {
+            "x": 600,
+            "z": 0
+          },
+          {
+            "x": 600,
+            "z": 900
+          },
+          {
+            "x": 596,
+            "z": 900
+          }
+        ],
+        "surface": 8
+      }
+    ],
+    "trees": [
+      {
+        "position": {
+          "x": 250,
+          "y": 0,
+          "z": 120
+        },
+        "kind": "pine",
+        "scale": 1.2,
+        "rotation": 0.4
+      },
+      {
+        "position": {
+          "x": 350,
+          "y": 0,
+          "z": 150
+        },
+        "kind": "pine",
+        "scale": 1,
+        "rotation": 1.1
+      },
+      {
+        "position": {
+          "x": 245,
+          "y": 0,
+          "z": 220
+        },
+        "kind": "pine",
+        "scale": 1.3,
+        "rotation": 2.2
+      },
+      {
+        "position": {
+          "x": 370,
+          "y": 0,
+          "z": 260
+        },
+        "kind": "pine",
+        "scale": 0.9,
+        "rotation": 2.8
+      },
+      {
+        "position": {
+          "x": 80,
+          "y": 0,
+          "z": 470
+        },
+        "kind": "pine",
+        "scale": 1.1,
+        "rotation": 0.8
+      },
+      {
+        "position": {
+          "x": 200,
+          "y": 0,
+          "z": 520
+        },
+        "kind": "pine",
+        "scale": 1.2,
+        "rotation": 1.8
+      },
+      {
+        "position": {
+          "x": 390,
+          "y": 0,
+          "z": 660
+        },
+        "kind": "pine",
+        "scale": 1.1,
+        "rotation": 2.5
+      },
+      {
+        "position": {
+          "x": 540,
+          "y": 0,
+          "z": 700
+        },
+        "kind": "pine",
+        "scale": 1.3,
+        "rotation": 0.6
+      },
+      {
+        "position": {
+          "x": 390,
+          "y": 0,
+          "z": 780
+        },
+        "kind": "pine",
+        "scale": 1,
+        "rotation": 1.4
+      },
+      {
+        "position": {
+          "x": 540,
+          "y": 0,
+          "z": 850
+        },
+        "kind": "pine",
+        "scale": 1.2,
+        "rotation": 2.1
+      }
+    ]
+  },
+  "environment": {
+    "sunAzimuthDeg": 140,
+    "sunElevationDeg": 48,
+    "hdri": "limpopo_golf_course"
+  },
+  "hashes": {
+    "terrain": "d26396eeeca6c24749f2213de68071410960e0c9ff134cad999c67d6a1c67c75",
+    "surface": "99428b276d8fb7f06a2b6f7e1962d1db585d43929d156016133a4956eaf83c5c"
+  }
+}

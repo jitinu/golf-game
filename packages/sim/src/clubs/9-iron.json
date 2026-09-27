@@ -1,0 +1,1 @@
+{"id":"9-iron","displayName":"9 Iron","category":"iron","loftDeg":39,"launchAngleDeg":28,"speedCurve":[[0,0],[0.5,33],[1,48]],"baseBackspinRpm":8200,"accuracyToSideSpinRpm":1150,"accuracyToYawDeg":2.4,"dispersionDeg":0.9,"smashFactor":1.33,"maxCarryHintM":125}

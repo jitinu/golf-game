@@ -1,0 +1,11 @@
+{
+  "name": "@golf/course-builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@golf/course-format": "workspace:*",
+    "@golf/sim": "workspace:*"
+  },
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" }
+}
