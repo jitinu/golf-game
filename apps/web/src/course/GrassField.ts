@@ -47,7 +47,7 @@ function surfaceHeight(surface: SurfaceId): number {
     case SurfaceId.FirstCut:
       return 0.15;
     default:
-      return 0.26;
+      return 0.3;
   }
 }
 
@@ -239,9 +239,9 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
         float diffuse = max(dot(n, sunDirection), 0.0);
         // Thin blades transmit light: brighten tips when the sun is behind them.
         float translucency = pow(max(dot(-vViewDir, sunDirection), 0.0), 3.0) * vHeight * 0.35;
-        vec3 sun = vec3(1.0, 0.95, 0.86) * (diffuse * 1.1 + translucency) * sunShadow();
-        vec3 sky = vec3(0.62, 0.72, 0.8) * 0.4;
-        vec3 color = tex.rgb * vTint * (sun + sky) * ao * 0.95;
+        vec3 sun = vec3(1.0, 0.94, 0.84) * (diffuse * 1.15 + translucency) * sunShadow();
+        vec3 sky = vec3(0.6, 0.7, 0.8) * 0.32;
+        vec3 color = tex.rgb * vTint * (sun + sky) * ao * 0.76;
         // Far blades lose contrast so sparse distant clusters read as ground texture rather than speckle.
         float luma = dot(color, vec3(0.3, 0.59, 0.11));
         color = mix(color, mix(color, vec3(luma), 0.35) * 1.15 / mix(1.0, ao, 0.6), far);
@@ -342,26 +342,40 @@ export class GrassField {
       // Patch-scale variation: thin/thick density, dry/lush tone and a comb direction that drifts across the course.
       const density = valueNoise(x, z, 9, 1) * 0.6 + valueNoise(x, z, 2.5, 2) * 0.4;
       const lush = valueNoise(x, z, 14, 3);
-      const thinCut = surface === SurfaceId.Green || surface === SurfaceId.Fairway;
-      const grow = grassy(surface) && density > (thinCut ? 0.42 : 0.28) - (ringIndex === 0 ? 0.1 : 0);
+      const mown = surface === SurfaceId.Green || surface === SurfaceId.Fairway;
+      const rough = surface === SurfaceId.Rough;
+      const grow = grassy(surface) && density > (mown ? 0.42 : 0.24) - (ringIndex === 0 ? 0.1 : 0);
+      // Rough is uneven (wide length spread, occasional tussocks); mown turf is uniform.
+      const tussock = rough && hash(seed + 7) > 0.9;
+      const spread = rough ? 0.55 + hash(seed + 2) * 0.9 : 0.8 + hash(seed + 2) * 0.4;
       const height = grow
-        ? surfaceHeight(surface) * (0.75 + hash(seed + 2) * 0.5) * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1)
+        ? surfaceHeight(surface) * spread * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1) * (tussock ? 1.5 : 1)
         : 0;
-      const width = 0.22 + hash(seed + 3) * 0.28 + ringIndex * 0.12;
+      const width = (0.22 + hash(seed + 3) * 0.28 + ringIndex * 0.12) * (tussock ? 1.4 : rough ? 1.15 : 1);
       this.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash(seed + 4) * Math.PI * 2);
       this.scale.set(width, height, width);
       this.position.set(x, this.course.sampler.heightAt(x, z) - 0.01, z);
       this.matrix.compose(this.position, this.quaternion, this.scale);
       mesh.setMatrixAt(index, this.matrix);
-      const dry = hash(seed + 5) * 0.5 + (1 - lush) * 0.5;
-      const shade = (0.82 + hash(seed + 6) * 0.26) * (0.9 + lush * 0.2);
-      tints[index * 3] = (0.68 + dry * 0.34) * shade;
-      tints[index * 3 + 1] = (0.9 + dry * 0.1) * shade;
-      tints[index * 3 + 2] = (0.48 + dry * 0.14) * shade;
-      const combAngle = valueNoise(x, z, 22, 4) * Math.PI * 2;
-      const combStrength = 0.08 + valueNoise(x, z, 6, 5) * 0.18;
-      combs[index * 2] = Math.cos(combAngle) * combStrength;
-      combs[index * 2 + 1] = Math.sin(combAngle) * combStrength;
+      // Fairway passes alternate direction every 8 m (matching the turf stripes); blades comb with the pass and
+      // the stripe facing the light reads a touch lighter. Rough follows a slow drifting comb instead.
+      const band = Math.floor((x - z) / 8);
+      const stripe = ((band % 2) + 2) % 2 === 0 ? 1 : -1;
+      const dryness = rough ? hash(seed + 5) * 0.35 + (1 - lush) * 0.65 : (hash(seed + 5) * 0.5 + (1 - lush) * 0.5) * (mown ? 0.4 : 0.75);
+      const shade = (0.82 + hash(seed + 6) * 0.26) * (0.9 + lush * 0.2) * (mown ? 1 + stripe * 0.05 : 1);
+      tints[index * 3] = (0.66 + dryness * 0.4) * shade;
+      tints[index * 3 + 1] = (0.78 + dryness * 0.08) * shade;
+      tints[index * 3 + 2] = (0.52 + dryness * 0.1) * shade;
+      if (mown) {
+        const pass = 0.16 * stripe;
+        combs[index * 2] = pass * 0.7071;
+        combs[index * 2 + 1] = pass * 0.7071;
+      } else {
+        const combAngle = valueNoise(x, z, 22, 4) * Math.PI * 2;
+        const combStrength = 0.1 + valueNoise(x, z, 6, 5) * 0.22;
+        combs[index * 2] = Math.cos(combAngle) * combStrength;
+        combs[index * 2 + 1] = Math.sin(combAngle) * combStrength;
+      }
     }
     mesh.instanceMatrix.needsUpdate = true;
     for (const name of ['tint', 'comb']) {

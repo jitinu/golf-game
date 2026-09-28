@@ -38,15 +38,80 @@ interface TreeKind {
   /** Metres from base to crown at scale 1. */
   height: number;
   seeds: number[];
+  /** Species shaping applied on top of the preset (bark, canopy density, leaf tone, growth direction). */
+  shape?: (options: Tree['options']) => void;
+  /** Foliage tone centre: warm/yellow-green share (0 = cool dark green) and brightness multiplier. */
+  foliage?: { warmth: number; brightness: number };
 }
 
-/** Course `tree.kind` → ez-tree preset (MIT, textured bark + leaf cards). Unknown kinds fall back to pine. */
+/**
+ * Course `tree.kind` → ez-tree preset (MIT, textured bark + leaf cards) plus species shaping so the belts mix tall
+ * conifers, broad spreading hardwoods, slender white-barked birches, weeping willows by the water and understory
+ * bushes. Unknown kinds fall back to pine.
+ */
 const TREE_KINDS: Record<string, TreeKind> = {
-  pine: { preset: 'Pine Medium', height: 15, seeds: [1201, 1202, 1203] },
-  oak: { preset: 'Oak Medium', height: 12, seeds: [2101, 2102, 2103] },
-  ash: { preset: 'Ash Medium', height: 12.5, seeds: [3101, 3102] },
-  aspen: { preset: 'Aspen Medium', height: 11, seeds: [4101, 4102] },
-  bush: { preset: 'Bush 1', height: 2.5, seeds: [5101] },
+  pine: { preset: 'Pine Medium', height: 15, seeds: [1201, 1202, 1203, 1204], foliage: { warmth: 0.25, brightness: 0.9 } },
+  tallpine: {
+    preset: 'Pine Large',
+    height: 23,
+    seeds: [1301, 1302, 1303],
+    shape: (options) => {
+      options.branch.length[0] *= 1.1;
+      options.leaves.count = Math.round(options.leaves.count * 1.15);
+    },
+    foliage: { warmth: 0.2, brightness: 0.82 },
+  },
+  oak: { preset: 'Oak Medium', height: 12, seeds: [2101, 2102, 2103, 2104], foliage: { warmth: 0.5, brightness: 1 } },
+  bigoak: {
+    preset: 'Oak Large',
+    height: 17,
+    seeds: [2201, 2202, 2203],
+    shape: (options) => {
+      options.branch.angle[1] += 12;
+      options.branch.length[1] *= 1.25;
+      options.leaves.count = Math.round(options.leaves.count * 1.3);
+      options.leaves.size *= 1.1;
+    },
+    foliage: { warmth: 0.45, brightness: 0.92 },
+  },
+  ash: { preset: 'Ash Medium', height: 12.5, seeds: [3101, 3102, 3103], foliage: { warmth: 0.6, brightness: 1.05 } },
+  aspen: { preset: 'Aspen Medium', height: 11, seeds: [4101, 4102, 4103], foliage: { warmth: 0.75, brightness: 1.1 } },
+  birch: {
+    preset: 'Aspen Large',
+    height: 14,
+    seeds: [4201, 4202, 4203],
+    shape: (options) => {
+      options.bark.type = 'birch';
+      options.bark.tint = 0xf2f0e8;
+      options.bark.textureScale.y *= 1.6;
+      options.branch.radius[0] *= 0.75;
+      options.branch.gnarliness[1] += 0.1;
+      options.leaves.size *= 0.8;
+      options.leaves.count = Math.round(options.leaves.count * 1.2);
+    },
+    foliage: { warmth: 0.85, brightness: 1.15 },
+  },
+  willow: {
+    preset: 'Ash Large',
+    height: 11,
+    seeds: [6101, 6102],
+    shape: (options) => {
+      options.bark.type = 'willow';
+      options.branch.angle[1] += 20;
+      options.branch.angle[2] += 25;
+      options.branch.force.direction = { x: 0, y: -1, z: 0 };
+      options.branch.force.strength = 0.06;
+      options.branch.length[2] *= 1.4;
+      options.branch.gnarliness[2] += 0.15;
+      options.leaves.type = 'ash';
+      options.leaves.size *= 0.85;
+      options.leaves.count = Math.round(options.leaves.count * 1.4);
+    },
+    foliage: { warmth: 0.7, brightness: 1.08 },
+  },
+  bush: { preset: 'Bush 1', height: 2.5, seeds: [5101, 5102], foliage: { warmth: 0.5, brightness: 0.95 } },
+  bush2: { preset: 'Bush 2', height: 1.8, seeds: [5201, 5202], foliage: { warmth: 0.6, brightness: 1 } },
+  bush3: { preset: 'Bush 3', height: 3.2, seeds: [5301], foliage: { warmth: 0.35, brightness: 0.9 } },
 };
 
 interface Variant {
@@ -83,6 +148,7 @@ function generateTree(kind: TreeKind, seed: number, detail: MeshDetail): { tree:
   const factor = detailScale(detail);
   const options = tree.options;
   options.seed = seed;
+  kind.shape?.(options);
   for (const level of [0, 1, 2, 3] as const) {
     options.branch.segments[level] = Math.max(3, Math.round(options.branch.segments[level] * factor.segments));
   }
@@ -131,6 +197,7 @@ export class Vegetation {
   readonly group = new THREE.Group();
   private readonly variants = new Map<string, Variant>();
   private readonly windUniform = { value: 0 };
+  private readonly sunUniform = { value: new THREE.Vector3(0.4, 0.8, 0.45) };
   private readonly billboardDistance: number;
   private readonly nearDistance: number;
   private readonly impostorViewSize: THREE.Vector2;
@@ -140,6 +207,7 @@ export class Vegetation {
   private readonly impostorCamera = new THREE.OrthographicCamera();
 
   constructor(course: LoadedCourse, preset: GraphicsPreset, environment?: Environment, renderer?: THREE.WebGLRenderer) {
+    if (environment) this.sunUniform.value.copy(environment.sunDirection).normalize();
     this.billboardDistance = BILLBOARD_DISTANCE[preset.treeDetail];
     this.nearDistance = NEAR_DISTANCE[preset.treeDetail];
     const maxTexture = renderer?.capabilities.maxTextureSize ?? 2048;
@@ -159,9 +227,11 @@ export class Vegetation {
       const position = new THREE.Vector3(tree.position.x, course.sampler.heightAt(tree.position.x, tree.position.z) - 0.05, tree.position.z);
       const scale = tree.scale;
       const matrix = new THREE.Matrix4().compose(position, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), tree.rotation), new THREE.Vector3(scale, scale, scale));
-      // Per-tree foliage tone: lush/dark through yellow-green so neighbours of the same variant never match.
-      const warmth = hash(index * 2.17);
-      const brightness = 0.78 + hash(index * 3.91) * 0.34;
+      // Per-tree foliage tone around the species centre: lush/dark through yellow-green so neighbours of the same
+      // variant never match and conifers stay darker than birches.
+      const foliage = kind.foliage ?? { warmth: 0.5, brightness: 1 };
+      const warmth = THREE.MathUtils.clamp(foliage.warmth + (hash(index * 2.17) - 0.5) * 0.5, 0, 1);
+      const brightness = foliage.brightness * (0.8 + hash(index * 3.91) * 0.34);
       const tint = new THREE.Color((0.84 + warmth * 0.3) * brightness, (0.9 + warmth * 0.1) * brightness, (0.78 + (1 - warmth) * 0.22) * brightness);
       bucket.members.push({ matrix, position, scale, tint });
     });
@@ -186,10 +256,23 @@ export class Vegetation {
       }
       const barkMaterial = new THREE.MeshStandardMaterial({ map: source.map, normalMap: source.normalMap, aoMap: source.aoMap, roughness: 0.95, metalness: 0, color: source.color });
       if (barkMaterial.aoMap) barkMaterial.aoMap.channel = 0;
-      const leafMaterial = new THREE.MeshStandardMaterial({ map: leafSource.map, color: leafSource.color, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
+      const leafMaterial = new THREE.MeshStandardMaterial({ map: leafSource.map, color: leafSource.color, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
       const wind = this.windUniform;
+      const sunDirection = this.sunUniform;
       leafMaterial.onBeforeCompile = (shader) => {
         shader.uniforms.uWindTime = wind;
+        shader.uniforms.uSunDirection = sunDirection;
+        // Leaves transmit light: canopies between the camera and the sun glow warm instead of going flat and dark.
+        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uSunDirection;').replace(
+          '#include <lights_fragment_end>',
+          `#include <lights_fragment_end>
+          {
+            vec3 toCamera = normalize(vViewPosition);
+            vec3 sunView = normalize((viewMatrix * vec4(uSunDirection, 0.0)).xyz);
+            float backlit = pow(clamp(dot(-toCamera, sunView), 0.0, 1.0), 3.0);
+            reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.0, 0.96, 0.78) * backlit * 0.5;
+          }`,
+        );
         shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float uWindTime;').replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>

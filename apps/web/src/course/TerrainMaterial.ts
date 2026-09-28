@@ -268,16 +268,22 @@ export function createTerrainMaterial(mask: THREE.DataTexture, maskOrigin: THREE
             }
           }
           float wet = clamp(water / 4.0, 0.0, 1.0);
-          // Mower stripes on green (narrow, diagonal) and fairway (wide, along z); weight by how much of the blend is mown.
+          // Mower stripes weighted by how much of the blend is mown.
           float mown = w.x * step(l00, 1.5) + w.y * step(l10, 1.5) + w.z * step(l01, 1.5) + w.w * step(l11, 1.5);
           float greenShare = w.x * step(l00, 0.5) + w.y * step(l10, 0.5) + w.z * step(l01, 0.5) + w.w * step(l11, 0.5);
-          float fairwayStripe = step(0.5, fract(world.x / 7.0));
-          float greenStripe = step(0.5, fract((world.x + world.y) / 2.6));
+          float roughShare = w.x * step(2.5, l00) * step(l00, 3.5) + w.y * step(2.5, l10) * step(l10, 3.5) + w.z * step(2.5, l01) * step(l01, 3.5) + w.w * step(2.5, l11) * step(l11, 3.5);
+          // Fairways are mown in 8 m diagonal passes; greens get a tight checkerboard (two perpendicular passes).
+          float fairwayStripe = step(0.5, fract((world.x - world.y) / 8.0));
+          float greenStripe = abs(step(0.5, fract(world.x / 2.4)) - step(0.5, fract(world.y / 2.4)));
           float stripe = mix(fairwayStripe, greenStripe, greenShare);
-          float stripeShade = 1.0 + (stripe - 0.5) * 0.11 * mown;
-          // Slow macro variation so large areas do not read as one flat tone.
+          float stripeShade = 1.0 + (stripe - 0.5) * mix(0.14, 0.09, greenShare) * mown;
+          // Slow macro variation so large areas do not read as one flat tone, plus drier straw-toned patches
+          // (strongest in the rough) and 1–2 m clumps that break the rough into tussocks.
           float macro = 0.93 + 0.14 * terrainNoise(world * 0.035) * (0.5 + 0.5 * terrainNoise(world * 0.011 + 3.7));
-          diffuseColor.rgb = albedoMix.rgb * stripeShade * macro * (1.0 - wet * 0.35);
+          float dry = smoothstep(0.5, 0.85, terrainNoise(world * 0.021 + 7.1)) * mix(0.18, 0.5, roughShare);
+          float clumps = 1.0 - roughShare * 0.14 * terrainNoise(world * 0.7 + 1.3) - roughShare * 0.08 * terrainNoise(world * 2.3);
+          vec3 albedo = mix(albedoMix.rgb, albedoMix.rgb * vec3(1.14, 1.05, 0.72), dry);
+          diffuseColor.rgb = albedo * stripeShade * macro * clumps * (1.0 - wet * 0.35);
           // Turf and sand are matte; keep the authored roughness maps as variation on top of a high floor.
           terrainRoughness = (0.72 + 0.28 * nrMix.a) * (1.0 - wet * 0.4);
           terrainNormal = normalize(nrMix.xyz * 2.0 - 1.0);
