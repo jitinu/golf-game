@@ -13,9 +13,18 @@ const FRAMES_PER_SECOND = 60;
 /** Club speed at impact relative to the downswing's average; keeps the Hermite downswing monotonic (must stay ≤ 3). */
 const IMPACT_SPEED_RATIO = 2.6;
 
+/** Where the grip butt sits along the target line at address: just inside the lead thigh. */
+const HANDS_X = 0.05;
+/** Where each hand's knuckle line crosses the shaft, down the grip from the butt (overlap grip: trail hand below). */
+const GRIP_ALONG: Record<Side['name'], number> = { Left: 0.05, Right: 0.13 };
+
+function gripPoint(butt: THREE.Vector3, shaft: THREE.Vector3, side: Side): THREE.Vector3 {
+  return butt.clone().addScaledVector(shaft, GRIP_ALONG[side.name]);
+}
+
 /** Distance from the body centre to the ball for a club, along the character's +Z. */
 export function stanceDistance(spec: ClubSpec): number {
-  return spec.length * Math.cos(spec.lie) + 0.24;
+  return spec.length * Math.cos(spec.lie) + 0.22;
 }
 
 const X = new THREE.Vector3(1, 0, 0);
@@ -176,6 +185,36 @@ function plantFoot(rig: SwingRig, side: Side, planted: PlantedFoot, pose: BodyPo
 
 interface ArmSolution {
   forearmAxis: THREE.Vector3;
+  /** Character-space direction from the wrist toward the knuckles. */
+  fingers: THREE.Vector3;
+}
+
+/** The shaft lies across the base of the fingers, this fraction of the way from the wrist to the middle knuckle. */
+const PALM_LENGTH_RATIO = 0.82;
+/** Palm thickness between the shaft axis and the palm surface. */
+const PALM_DEPTH = 0.022;
+
+/**
+ * Places a hand on the grip: solves once to learn where the fingers will point, then backs the wrist off along the palm
+ * so the knuckles straddle the shaft, and wraps the fingers around it.
+ */
+function gripHand(
+  rig: SwingRig,
+  side: Side,
+  gripPoint: THREE.Vector3,
+  palm: THREE.Vector3,
+  shaft: THREE.Vector3,
+  curl: number,
+  hold = 1,
+): void {
+  const surface = gripPoint.clone().addScaledVector(palm, -PALM_DEPTH * hold);
+  const first = solveArm(rig, side, surface, palm, shaft);
+  if (first && hold > 0) {
+    const fingers = first.fingers.clone().addScaledVector(shaft, -first.fingers.dot(shaft)).normalize();
+    const palmLength = PALM_LENGTH_RATIO * rig.restLength(`${side.name}Hand`, `${side.name}HandMiddle1`);
+    solveArm(rig, side, surface.clone().addScaledVector(fingers, -palmLength * hold), palm, shaft);
+  }
+  curlFingers(rig, side, curl, shaft, palm);
 }
 
 /** Two-bone analytic IK on shoulder → elbow → wrist, then twists the forearm and orients the hand for the grip. */
@@ -192,15 +231,26 @@ function solveArm(
   if (!upper || !fore || !hand) return undefined;
   const clavicle = rig.bone(`${side.name}Shoulder`);
   const shoulder = rig.positionOf(upper);
+  const l1 = rig.restLength(`${side.name}Arm`, `${side.name}ForeArm`);
+  const l2 = rig.restLength(`${side.name}ForeArm`, `${side.name}Hand`);
   if (clavicle) {
     const raise = THREE.MathUtils.clamp((wrist.y - shoulder.y) / 0.6, 0, 1) * 0.14;
     const forward = THREE.MathUtils.clamp((wrist.z - shoulder.z) / 0.6, -0.5, 1) * 0.1;
     rig.applyDelta(clavicle, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -forward * side.sign, raise * side.sign)));
     rig.update();
     rig.positionOf(upper, shoulder);
+    // Shoulder protraction: when the grip is at the limit of the arm's reach the shoulder girdle rolls toward it.
+    const stretch = THREE.MathUtils.clamp((wrist.distanceTo(shoulder) / (l1 + l2) - 0.88) / 0.1, 0, 1);
+    if (stretch > 0) {
+      const socket = rig.positionOf(clavicle);
+      const current = shoulder.clone().sub(socket).normalize();
+      const wanted = wrist.clone().sub(socket).normalize();
+      const full = new THREE.Quaternion().setFromUnitVectors(current, wanted);
+      rig.rotate(clavicle, new THREE.Quaternion().slerp(full, 0.45 * stretch));
+      rig.update();
+      rig.positionOf(upper, shoulder);
+    }
   }
-  const l1 = rig.restLength(`${side.name}Arm`, `${side.name}ForeArm`);
-  const l2 = rig.restLength(`${side.name}ForeArm`, `${side.name}Hand`);
   const toWrist = wrist.clone().sub(shoulder);
   const distance = THREE.MathUtils.clamp(toWrist.length(), Math.abs(l1 - l2) + 0.01, (l1 + l2) * 0.995);
   const u = toWrist.normalize();
@@ -237,7 +287,7 @@ function solveArm(
   if (wrap.lengthSq() >= 1e-6) {
     wrap.normalize();
     if (wrap.dot(alongForearm) < 0) wrap.negate();
-    const MAX_WRIST = 0.8;
+    const MAX_WRIST = 1.1;
     const deviation = Math.acos(THREE.MathUtils.clamp(alongForearm.dot(wrap), -1, 1));
     if (deviation > 1e-4) {
       const sign = Math.sign(new THREE.Vector3().crossVectors(alongForearm, wrap).dot(palm)) || 1;
@@ -253,15 +303,26 @@ function solveArm(
   );
   rig.setOrientation(hand, target.multiply(restBasis.invert()).multiply(rig.restWorld(hand)));
   rig.update();
-  return { forearmAxis };
+  return { forearmAxis, fingers };
 }
 
-/** Curls the fingers toward the palm about the rest knuckle axis, expressed in each phalanx's own frame. */
-function curlFingers(rig: SwingRig, side: Side, amount: number): void {
-  const { across } = rig.handFrame(side.name);
+/** Wraps the fingers around the shaft: each phalanx curls about the shaft axis, toward the palm. */
+function curlFingers(rig: SwingRig, side: Side, amount: number, shaft: THREE.Vector3, palmNormal: THREE.Vector3): void {
+  const hand = rig.bone(`${side.name}Hand`);
+  if (!hand) return;
+  hand.updateWorldMatrix(true, false);
+  const restHand = rig.handFrame(side.name);
+  const handDelta = rig.quaternionOf(hand).multiply(rig.restWorld(hand).clone().invert());
+  const fingersNow = restHand.fingers.clone().applyQuaternion(handDelta);
+  const sign = Math.sign(new THREE.Vector3().crossVectors(shaft, fingersNow).dot(palmNormal)) || 1;
+  const axis = new THREE.Vector3();
   const curl = (name: string, angle: number): void => {
     const bone = rig.bone(name);
-    if (bone) rig.applyLocal(name, rig.localAxis(bone, across), angle);
+    if (!bone) return;
+    bone.updateWorldMatrix(true, false);
+    axis.copy(shaft).applyQuaternion(rig.quaternionOf(bone).invert()).normalize();
+    rig.applyLocal(name, axis, sign * angle);
+    bone.updateWorldMatrix(false, false);
   };
   for (const finger of ['Index', 'Middle', 'Ring', 'Pinky']) {
     for (const segment of [1, 2, 3]) {
@@ -315,9 +376,11 @@ function addressBody(spec: ClubSpec, tilt: number): BodyPose {
  * the arms to hang to the grip with a little slack.
  */
 function solveAddress(rig: SwingRig, spec: ClubSpec, ball: THREE.Vector3): AddressFrame {
-  const lean = spec.lie > THREE.MathUtils.degToRad(66) ? 0 : spec.lie > THREE.MathUtils.degToRad(60) ? 0.1 : 0.05;
-  const shaft = new THREE.Vector3(-lean, -Math.sin(spec.lie), Math.cos(spec.lie)).normalize();
+  // Hands sit just inside the lead thigh regardless of ball position, so the shaft leans toward the target for the
+  // short clubs (ball centred) and away from it for the driver (ball off the lead heel).
   const soleContact = new THREE.Vector3(ball.x - 0.02, 0.008, ball.z - 0.045);
+  const lean = (HANDS_X - soleContact.x) / spec.length;
+  const shaft = new THREE.Vector3(-lean, -Math.sin(spec.lie), Math.cos(spec.lie)).normalize();
   const butt = soleContact.clone().addScaledVector(shaft, -spec.length);
   const clubX = X.clone().addScaledVector(shaft, -X.dot(shaft)).normalize();
   const clubY = shaft.clone().negate();
@@ -336,13 +399,12 @@ function solveAddress(rig: SwingRig, spec: ClubSpec, ball: THREE.Vector3): Addre
       if (!upper) continue;
       const shoulder = rig.positionOf(upper);
       shoulders.push(shoulder);
-      const along = side.name === 'Left' ? 0.09 : 0.17;
-      const wrist = butt.clone().addScaledVector(shaft, along).addScaledVector(clubX, 0.035 * side.sign);
+      const wrist = gripPoint(butt, shaft, side);
       const reach = rig.restLength(`${side.name}Arm`, `${side.name}ForeArm`) + rig.restLength(`${side.name}ForeArm`, `${side.name}Hand`);
       worst = Math.max(worst, reach > 0 ? wrist.distanceTo(shoulder) / reach : 0);
     }
     pivot = shoulders.length === 2 ? shoulders[0]!.clone().add(shoulders[1]!).multiplyScalar(0.5) : new THREE.Vector3(0, 1.4, 0);
-    if (worst <= 0.9 || tilt >= 0.95) break;
+    if (worst <= 0.93 || tilt >= 0.9) break;
     tilt += 0.045;
   }
   const toBall = ball.clone().sub(pivot).normalize();
@@ -413,7 +475,7 @@ function swingBody(spec: ClubSpec, address: AddressFrame, swing: Swing, t: numbe
   const squat = downswing * (1 - smooth((t - swing.impactTime + 0.05) / 0.12));
   const post = smooth((t - swing.impactTime + 0.04) / 0.14);
   body.hipsYaw = hipPhi < 0 ? 0.3 * hipPhi : 0.52 * hipPhi;
-  body.spineYaw = (phi < 0 ? 0.55 * phi : 0.6 * phi) - body.hipsYaw;
+  body.spineYaw = (phi < 0 ? 0.5 * phi : 0.6 * phi) - body.hipsYaw;
   body.spineTilt = address.tilt * (1 - 0.55 * through) - 0.12 * through;
   body.spineBend = 0.08 + 0.12 * back - 0.25 * through;
   body.hipsShift = new THREE.Vector3(
@@ -446,14 +508,17 @@ function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   const hinge = phi < 0 ? -swing.hinge * (lagging ? held : Math.pow(fraction, 1.4)) : swing.hinge * held * 0.9;
   const armRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi);
   const clubRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi + hinge);
-  const radiusScale = phi < 0 ? 1 - 0.08 * fraction * fraction : 1 - 0.18 * fraction * fraction;
+  const radiusScale = phi < 0 ? 1 + 0.08 * fraction * fraction : 1 - 0.1 * fraction * fraction;
   // At address the hands hang below the shoulder plane; going back they rise toward it (hands beside the trail
   // shoulder at the top, not over the head) and in the finish they fold behind the head, below the plane.
   const armVector = address.butt.clone().sub(address.pivot);
   const offPlane = armVector.dot(address.normal);
-  const lift = phi < 0 ? 1 - 0.55 * Math.pow(fraction, 1.3) : 1 + 0.35 * Math.pow(fraction, 1.2);
+  const lift = phi < 0 ? 1 : 1 + 0.18 * Math.pow(fraction, 1.2);
   const inPlane = armVector.clone().addScaledVector(address.normal, -offPlane).multiplyScalar(radiusScale).applyQuaternion(armRotation);
   const butt = inPlane.addScaledVector(address.normal, offPlane * lift).add(address.pivot);
+  // The hands ride up over the trail shoulder at the top and over the lead shoulder in the finish, keeping the
+  // folded arm at a right angle rather than collapsing onto the shoulder.
+  butt.y += phi < 0 ? 0.11 * Math.pow(fraction, 1.5) : 0.12 * Math.pow(fraction, 2);
   return {
     butt,
     shaft: address.shaft.clone().applyQuaternion(clubRotation),
@@ -462,13 +527,31 @@ function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   };
 }
 
-function placeHands(rig: SwingRig, frame: ClubFrame): void {
+/**
+ * Pulls the club toward the body when a grip point sits beyond an arm's reach, so a straight lead arm at the top (or
+ * trail arm in the finish) still keeps its hand on the grip instead of falling short of it.
+ */
+function clampToReach(rig: SwingRig, frame: ClubFrame): void {
+  const shift = new THREE.Vector3();
   for (const side of SIDES) {
-    const along = side.name === 'Left' ? 0.09 : 0.17;
-    const wrist = frame.butt.clone().addScaledVector(frame.shaft, along).addScaledVector(frame.clubX, 0.035 * side.sign);
+    const upper = rig.bone(`${side.name}Arm`);
+    if (!upper) continue;
+    const shoulder = rig.positionOf(upper);
+    const reach =
+      0.97 * (rig.restLength(`${side.name}Arm`, `${side.name}ForeArm`) + rig.restLength(`${side.name}ForeArm`, `${side.name}Hand`)) +
+      PALM_LENGTH_RATIO * rig.restLength(`${side.name}Hand`, `${side.name}HandMiddle1`);
+    const toGrip = gripPoint(frame.butt, frame.shaft, side).add(shift).sub(shoulder);
+    const excess = toGrip.length() - reach;
+    if (excess > 0) shift.addScaledVector(toGrip.normalize(), -excess);
+  }
+  frame.butt.add(shift);
+}
+
+function placeHands(rig: SwingRig, frame: ClubFrame): void {
+  clampToReach(rig, frame);
+  for (const side of SIDES) {
     const palm = frame.clubX.clone().multiplyScalar(-side.sign);
-    solveArm(rig, side, wrist, palm, frame.shaft);
-    curlFingers(rig, side, 1.15);
+    gripHand(rig, side, gripPoint(frame.butt, frame.shaft, side), palm, frame.shaft, 1.15);
   }
   rig.update();
 }
@@ -564,13 +647,10 @@ export function bakeCelebration(context: BakeContext): THREE.AnimationClip {
       const upper = rig.bone(`${side.name}Arm`);
       if (!upper) continue;
       const shoulder = rig.positionOf(upper);
-      const along = side.name === 'Left' ? 0.09 : 0.17;
-      const gripWrist = addressClub.butt.clone().addScaledVector(addressClub.shaft, along).addScaledVector(addressClub.clubX, 0.035 * side.sign);
       const upWrist = shoulder.clone().add(new THREE.Vector3(0.25 * side.sign, 0.5, 0.18));
-      const wrist = gripWrist.lerp(upWrist, raise);
+      const grip = gripPoint(addressClub.butt, addressClub.shaft, side).lerp(upWrist, raise);
       const palm = addressClub.clubX.clone().multiplyScalar(-side.sign).lerp(Z, raise).normalize();
-      solveArm(rig, side, wrist, palm, addressClub.shaft);
-      curlFingers(rig, side, 1.15 * (1 - raise) + 0.4 * raise);
+      gripHand(rig, side, grip, palm, addressClub.shaft, 1.15 * (1 - raise) + 0.4 * raise, 1 - raise);
     }
     rig.update();
     const rightHand = rig.bone('RightHand');
@@ -579,7 +659,7 @@ export function bakeCelebration(context: BakeContext): THREE.AnimationClip {
       const shaft = new THREE.Vector3(-0.15, 1, 0.1).normalize();
       const lifted = new THREE.Quaternion().setFromUnitVectors(addressClub.shaft, shaft).multiply(addressClub.quaternion);
       const liftedX = X.clone().applyQuaternion(lifted);
-      clubPivot.position.copy(wrist).addScaledVector(liftedX, 0.035).addScaledVector(shaft, -0.17).lerp(addressClub.butt, 1 - raise);
+      clubPivot.position.copy(wrist).addScaledVector(liftedX, PALM_DEPTH).addScaledVector(shaft, -GRIP_ALONG.Right).lerp(addressClub.butt, 1 - raise);
       clubPivot.quaternion.copy(addressClub.quaternion).slerp(lifted, raise);
     } else {
       clubPivot.position.copy(addressClub.butt);
