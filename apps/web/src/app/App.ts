@@ -247,7 +247,7 @@ export class App {
         this.courseScene.grass.update(this.renderer.camera.position, now / 1000, this.environment?.nearShadowLight());
         this.courseScene.vegetation.update(this.renderer.camera.position, dt);
         this.courseScene.water.update(now / 1000);
-        this.courseScene.flag.update(now / 1000);
+        this.courseScene.flag.update(now / 1000, this.renderer.camera.position, this.session.holeController?.wind);
         if (this.session.course && this.courseScene.debug.group.visible) {
           this.courseScene.debug.updateReadout(this.session.course, new THREE.Vector3(ballPosition.x, ballPosition.y, ballPosition.z));
         }

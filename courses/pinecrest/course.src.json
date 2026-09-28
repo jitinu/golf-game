@@ -240,7 +240,7 @@
         ],
         "surface": 1,
         "edgeSurface": 2,
-        "edgeWidth": 4
+        "edgeWidth": 6
       },
       {
         "points": [
@@ -274,7 +274,7 @@
         ],
         "surface": 1,
         "edgeSurface": 2,
-        "edgeWidth": 4
+        "edgeWidth": 6
       },
       {
         "points": [
@@ -308,7 +308,7 @@
         ],
         "surface": 1,
         "edgeSurface": 2,
-        "edgeWidth": 4
+        "edgeWidth": 6
       }
     ],
     "greens": [

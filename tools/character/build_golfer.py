@@ -44,6 +44,33 @@ macro["race"] = {"asian": 0.0, "caucasian": 1.0, "african": 0.0}
 
 basemesh = HumanService.create_human(macro_detail_dict=macro)
 
+# Fine targets on top of the macros: athletic V-shaped torso and shoulders, defined jaw/cheekbones instead of the
+# soft default face, a slightly thicker neck, and hands with separated, longer fingers so the grip reads.
+DETAIL_TARGETS = {
+    "torso-vshape-incr": 0.35,
+    "measure-shoulder-dist-incr": 0.2,
+    "torso-muscle-pectoral-incr": 0.15,
+    "torso-muscle-dorsi-incr": 0.15,
+    "neck-scale-horiz-incr": 0.15,
+    "neck-scale-depth-incr": 0.1,
+    "head-oval": 0.3,
+    "chin-bones-incr": 0.25,
+    "chin-prominent-incr": 0.1,
+    "forehead-temple-decr": 0.1,
+    "nose-scale-vert-decr": 0.05,
+    "mouth-upperlip-volume-incr": 0.1,
+}
+for side in ("l", "r"):
+    DETAIL_TARGETS.update({
+        f"{side}-cheek-bones-incr": 0.2,
+        f"{side}-upperarm-muscle-incr": 0.2,
+        f"{side}-lowerarm-muscle-incr": 0.15,
+        f"{side}-upperarm-shoulder-muscle-incr": 0.15,
+        f"{side}-hand-fingers-distance-incr": 0.15,
+        f"{side}-hand-fingers-length-incr": 0.1,
+    })
+TargetService.bulk_load_targets(basemesh, [{"target": name, "value": value} for name, value in DETAIL_TARGETS.items()])
+
 skin = AssetService.find_asset_absolute_path("young_caucasian_male.mhmat", asset_subdir="skins")
 HumanService.set_character_skin(skin, basemesh, skin_type="GAMEENGINE")
 
@@ -77,8 +104,8 @@ PBR_EXTRAS = {
     "polo": (f"{DATA}/clothes/namuhekam_male_polo_shirt/Polo_Normal_OpenGL.png",
              f"{DATA}/clothes/namuhekam_male_polo_shirt/Polo_Roughness.png", 0.85, True),
     "short02": (f"{DATA}/hair/short02/short02_normal.png", None, 0.55, False),
-    "shoes05": (None, None, 0.6, True),
-    "wool_pants": (None, None, 0.82, True),
+    "wool_pants": (f"{TEX}/pants_normal.png", None, 0.82, True),
+    "shoes05": (f"{TEX}/shoe_normal.png", None, 0.6, True),
     "body": (None, None, 0.55, True),
     "teeth": (None, None, 0.35, True),
     "high-poly": (None, None, 0.1, True),
@@ -329,6 +356,12 @@ children = ObjectService.get_list_of_children(export_root)
 for child in children:
     otype = ObjectService.get_object_type(child) or ""
     if child.type == "MESH":
+        # MPFB leaves asset subdivision at viewport level 0; clothing and shoes export one level smoothed so fabric
+        # folds and toe boxes are not faceted at the address camera.
+        if otype == "Clothes":
+            for modifier in child.modifiers:
+                if modifier.type == "SUBSURF":
+                    modifier.levels = 1
         child.name = otype if otype else child.name
         for slot in child.material_slots:
             if slot.material:

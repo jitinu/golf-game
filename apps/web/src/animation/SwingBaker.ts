@@ -49,6 +49,10 @@ interface BodyPose {
   stanceWidth: number;
   leadLegStraighten: number;
   trailKneeIn: number;
+  /** Trail heel coming off the turf as weight posts onto the lead side (0 = flat, 1 = up on the toe). */
+  trailHeelLift: number;
+  /** Lead knee kicking in toward the ball during the backswing; trail knee stays braced. */
+  leadKneeIn: number;
 }
 
 interface AddressFrame {
@@ -85,12 +89,16 @@ function poseBody(rig: SwingRig, pose: BodyPose): void {
   for (const side of SIDES) {
     const lead = side.name === 'Left';
     const straighten = lead ? pose.leadLegStraighten : 0;
-    const thighAngle = thigh * (1 - straighten) - (lead ? 0 : pose.trailKneeIn * 0.2);
-    const shinAngle = shin * (1 - straighten) + (lead ? 0 : pose.trailKneeIn * 0.8);
+    const kneeIn = lead ? pose.leadKneeIn : pose.trailKneeIn;
+    const thighAngle = thigh * (1 - straighten) - kneeIn * 0.2 + (lead ? 0 : pose.trailHeelLift * 0.25);
+    const shinAngle = shin * (1 - straighten) + kneeIn * 0.8 + (lead ? 0 : pose.trailHeelLift * 0.55);
     const width = pose.stanceWidth * side.sign;
-    rig.applyDeltaEuler(`${side.name}UpLeg`, thighAngle, 0, width + (lead ? 0 : pose.trailKneeIn * 0.35));
+    const roll = kneeIn * 0.35 * (lead ? -1 : 1);
+    rig.applyDeltaEuler(`${side.name}UpLeg`, thighAngle, 0, width + roll);
     rig.applyDeltaEuler(`${side.name}Leg`, shinAngle, 0, 0);
-    rig.applyDeltaEuler(`${side.name}Foot`, -(thighAngle + shinAngle) - pose.hipsTilt, 0, -width - (lead ? 0 : pose.trailKneeIn * 0.35));
+    // Feet stay flat on the turf except the trail heel, which peels up in the follow-through.
+    const heel = lead ? 0 : pose.trailHeelLift * 0.9;
+    rig.applyDeltaEuler(`${side.name}Foot`, -(thighAngle + shinAngle) - pose.hipsTilt + heel, 0, -width - roll);
   }
   rig.update();
 }
@@ -205,6 +213,8 @@ function addressBody(spec: ClubSpec, tilt: number): BodyPose {
     stanceWidth: wide ? 0.13 : 0.08,
     leadLegStraighten: 0,
     trailKneeIn: 0,
+    trailHeelLift: 0,
+    leadKneeIn: 0,
   };
 }
 
@@ -251,32 +261,54 @@ function solveAddress(rig: SwingRig, spec: ClubSpec, ball: THREE.Vector3): Addre
 function buildSwing(type: SwingType): Swing {
   const amplitude = AMPLITUDE[type];
   const impactTime = IMPACT_TIME[type];
-  const topTime = impactTime * 0.62;
+  // Tour tempo is roughly 3:1 backswing to downswing; the short game keeps a steadier, more even rhythm.
+  const topTime = impactTime * (type === 'swing_full' ? 0.72 : 0.64);
   const phiTop = -2.85 * amplitude;
   const phiEnd = 2.55 * amplitude;
   const hinge = 1.75 * Math.pow(amplitude, 1.2);
   const phi = (t: number): number => {
-    if (t < topTime) return phiTop * smooth(t / topTime);
-    if (t < impactTime) return phiTop * (1 - easeIn((t - topTime) / (impactTime - topTime), 2.2));
-    return phiEnd * easeOut((t - impactTime) / (1 - impactTime), 2.6);
+    if (t < topTime) {
+      // Slow, gathering takeaway with a brief settle at the top before transition.
+      return phiTop * smooth(easeOut(t / topTime, 1.25));
+    }
+    if (t < impactTime) return phiTop * (1 - easeIn((t - topTime) / (impactTime - topTime), 2.4));
+    // The club keeps accelerating past the ball, then decelerates into a held finish.
+    return phiEnd * easeOut((t - impactTime) / (1 - impactTime), 2.9);
   };
   return { phi, topTime, impactTime, phiTop, phiEnd, hinge, amplitude };
 }
 
+/**
+ * Kinematic sequence: shoulders lead the hips going back, hips lead coming down, weight bumps toward the target
+ * before rotation, the lead leg posts up through impact and the trail heel peels off into the finish.
+ */
 function swingBody(spec: ClubSpec, address: AddressFrame, swing: Swing, t: number): BodyPose {
   const phi = swing.phi(t);
-  const hipPhi = swing.phi(Math.min(1, t + 0.04));
+  const downswing = smooth((t - swing.topTime) / 0.08);
+  const hipPhi = swing.phi(THREE.MathUtils.clamp(t + THREE.MathUtils.lerp(-0.03, 0.05, downswing), 0, 1));
   const back = phi < 0 ? -phi / -swing.phiTop : 0;
   const through = phi > 0 ? phi / swing.phiEnd : 0;
   const body = addressBody(spec, address.tilt);
-  body.hipsYaw = hipPhi < 0 ? 0.3 * hipPhi : 0.5 * hipPhi;
+  const amp = swing.amplitude;
+  // Lateral weight bump: trail side loading going back, then a hip slide toward the target that precedes the turn.
+  const shift = -0.035 * back + 0.05 * downswing * (1 - through) + 0.1 * through;
+  // Transition squat then post-up: sit slightly as the downswing starts, extend through the ball.
+  const squat = downswing * (1 - smooth((t - swing.impactTime + 0.05) / 0.12));
+  const post = smooth((t - swing.impactTime + 0.04) / 0.14);
+  body.hipsYaw = hipPhi < 0 ? 0.3 * hipPhi : 0.52 * hipPhi;
   body.spineYaw = (phi < 0 ? 0.55 * phi : 0.6 * phi) - body.hipsYaw;
   body.spineTilt = address.tilt * (1 - 0.55 * through) - 0.12 * through;
-  body.spineBend = 0.08 + 0.1 * back - 0.25 * through;
-  body.hipsShift = new THREE.Vector3(-0.03 * back + 0.09 * through, -0.035 + 0.02 * through, -0.03 + 0.02 * through);
-  body.leadLegStraighten = 0.8 * through;
-  body.trailKneeIn = 0.5 * through;
-  body.kneeFlex = 0.42 + 0.1 * back;
+  body.spineBend = 0.08 + 0.12 * back - 0.25 * through;
+  body.hipsShift = new THREE.Vector3(
+    shift * amp,
+    -0.035 + 0.012 * back - 0.03 * squat + 0.03 * post,
+    -0.03 + 0.02 * through - 0.01 * back,
+  );
+  body.leadLegStraighten = 0.85 * post * amp;
+  body.trailKneeIn = 0.55 * through;
+  body.trailHeelLift = through * through * amp;
+  body.leadKneeIn = 0.45 * back * amp;
+  body.kneeFlex = 0.42 + 0.06 * back + 0.14 * squat * amp;
   return body;
 }
 
@@ -290,7 +322,12 @@ interface ClubFrame {
 function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   const phi = swing.phi(t);
   const fraction = phi < 0 ? -phi / -swing.phiTop : phi / swing.phiEnd;
-  const hinge = phi < 0 ? -swing.hinge * Math.pow(fraction, 1.4) : swing.hinge * Math.pow(fraction, 1.3) * 0.9;
+  // Wrists set progressively going back, then hold the lag through the downswing and release late into impact.
+  const lagging = t > swing.topTime && phi < 0;
+  const hinge =
+    phi < 0
+      ? -swing.hinge * Math.pow(fraction, lagging ? 0.55 : 1.4)
+      : swing.hinge * Math.pow(fraction, 1.3) * 0.9;
   const armRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi);
   const clubRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi + hinge);
   const radiusScale = phi < 0 ? 1 - 0.1 * fraction * fraction : 1 - 0.05 * fraction * fraction;

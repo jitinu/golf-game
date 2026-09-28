@@ -13,7 +13,7 @@
       "z": 0
     },
     "minHeight": 9.5,
-    "maxHeight": 15.514852393910843,
+    "maxHeight": 15.453155517578125,
     "file": "terrain.height.f32"
   },
   "surfaceMask": {
@@ -197,7 +197,7 @@
         ],
         "surface": 1,
         "edgeSurface": 2,
-        "edgeWidth": 4
+        "edgeWidth": 6
       },
       {
         "points": [
@@ -231,7 +231,7 @@
         ],
         "surface": 1,
         "edgeSurface": 2,
-        "edgeWidth": 4
+        "edgeWidth": 6
       },
       {
         "points": [
@@ -265,7 +265,7 @@
         ],
         "surface": 1,
         "edgeSurface": 2,
-        "edgeWidth": 4
+        "edgeWidth": 6
       }
     ],
     "greens": [
@@ -631,7 +631,7 @@
           }
         ],
         "surface": 5,
-        "waterLevel": 11.844
+        "waterLevel": 12.183
       },
       {
         "points": [
@@ -657,7 +657,7 @@
           }
         ],
         "surface": 5,
-        "waterLevel": 11.834
+        "waterLevel": 11.959
       },
       {
         "points": [
@@ -3205,6 +3205,16 @@
       },
       {
         "position": {
+          "x": 195.48460026718675,
+          "y": 0,
+          "z": 110.49343879558145
+        },
+        "kind": "bush2",
+        "scale": 1.35,
+        "rotation": 4.64
+      },
+      {
+        "position": {
           "x": 219.54498828798535,
           "y": 0,
           "z": 97.21967224925757
@@ -3252,16 +3262,6 @@
         "kind": "pine",
         "scale": 1.1,
         "rotation": 5.31
-      },
-      {
-        "position": {
-          "x": 275.97434745542705,
-          "y": 0,
-          "z": 110.19026755392551
-        },
-        "kind": "oak",
-        "scale": 0.94,
-        "rotation": 0.17
       },
       {
         "position": {
@@ -3835,16 +3835,6 @@
       },
       {
         "position": {
-          "x": 258.26750863865016,
-          "y": 0,
-          "z": 155.55609783492983
-        },
-        "kind": "aspen",
-        "scale": 0.84,
-        "rotation": 0.22
-      },
-      {
-        "position": {
           "x": 316.88627863526347,
           "y": 0,
           "z": 156.98011298701167
@@ -4032,6 +4022,16 @@
         "kind": "pine",
         "scale": 0.72,
         "rotation": 1.5
+      },
+      {
+        "position": {
+          "x": 179.3615532744676,
+          "y": 0,
+          "z": 184.26690511927006
+        },
+        "kind": "bush2",
+        "scale": 0.99,
+        "rotation": 4.88
       },
       {
         "position": {
@@ -4455,16 +4455,6 @@
       },
       {
         "position": {
-          "x": 332.569429390505,
-          "y": 0,
-          "z": 236.80957322381437
-        },
-        "kind": "willow",
-        "scale": 1.05,
-        "rotation": 4.51
-      },
-      {
-        "position": {
           "x": 416.65097818300126,
           "y": 0,
           "z": 236.77502977885308
@@ -4692,6 +4682,16 @@
         "kind": "willow",
         "scale": 1.23,
         "rotation": 2.56
+      },
+      {
+        "position": {
+          "x": 418.94979198202486,
+          "y": 0,
+          "z": 283.526568415761
+        },
+        "kind": "pine",
+        "scale": 1.18,
+        "rotation": 5.15
       },
       {
         "position": {
@@ -7042,16 +7042,6 @@
         "kind": "willow",
         "scale": 1.02,
         "rotation": 2.97
-      },
-      {
-        "position": {
-          "x": 146.2789032049477,
-          "y": 0,
-          "z": 475.9037321098149
-        },
-        "kind": "bush2",
-        "scale": 1.11,
-        "rotation": 0.4
       },
       {
         "position": {
@@ -10425,6 +10415,16 @@
       },
       {
         "position": {
+          "x": 331.4433905269951,
+          "y": 0,
+          "z": 670.8774982973933
+        },
+        "kind": "birch",
+        "scale": 0.82,
+        "rotation": 3.13
+      },
+      {
+        "position": {
           "x": 373.8875550754368,
           "y": 0,
           "z": 668.947325804457
@@ -11525,16 +11525,6 @@
       },
       {
         "position": {
-          "x": 397.54384216703477,
-          "y": 0,
-          "z": 712.0145655643196
-        },
-        "kind": "bush2",
-        "scale": 1.06,
-        "rotation": 1.56
-      },
-      {
-        "position": {
           "x": 482.796598155424,
           "y": 0,
           "z": 725.8021112274378
@@ -11635,16 +11625,6 @@
       },
       {
         "position": {
-          "x": 402.75100504793227,
-          "y": 0,
-          "z": 740.2959877841174
-        },
-        "kind": "willow",
-        "scale": 1.02,
-        "rotation": 4.81
-      },
-      {
-        "position": {
           "x": 587.6279376842082,
           "y": 0,
           "z": 739.8816485967486
@@ -11692,16 +11672,6 @@
         "kind": "willow",
         "scale": 0.92,
         "rotation": 1.82
-      },
-      {
-        "position": {
-          "x": 470.1567197117954,
-          "y": 0,
-          "z": 736.2250629357993
-        },
-        "kind": "pine",
-        "scale": 1.11,
-        "rotation": 1.1
       },
       {
         "position": {
@@ -11935,16 +11905,6 @@
       },
       {
         "position": {
-          "x": 503.66985256560145,
-          "y": 0,
-          "z": 774.3778974074871
-        },
-        "kind": "pine",
-        "scale": 0.86,
-        "rotation": 5.71
-      },
-      {
-        "position": {
           "x": 555.8487192697824,
           "y": 0,
           "z": 778.9070921275766
@@ -11992,16 +11952,6 @@
         "kind": "ash",
         "scale": 1.08,
         "rotation": 1.9
-      },
-      {
-        "position": {
-          "x": 439.84128688424823,
-          "y": 0,
-          "z": 788.5878843188286
-        },
-        "kind": "birch",
-        "scale": 0.99,
-        "rotation": 4.3
       },
       {
         "position": {
@@ -12132,16 +12082,6 @@
         "kind": "birch",
         "scale": 0.9,
         "rotation": 3.23
-      },
-      {
-        "position": {
-          "x": 525.579313685745,
-          "y": 0,
-          "z": 814.9324003450572
-        },
-        "kind": "pine",
-        "scale": 0.77,
-        "rotation": 5.88
       },
       {
         "position": {
@@ -12292,16 +12232,6 @@
         "kind": "pine",
         "scale": 1.05,
         "rotation": 5.29
-      },
-      {
-        "position": {
-          "x": 462.19597793072467,
-          "y": 0,
-          "z": 852.9297211308033
-        },
-        "kind": "pine",
-        "scale": 0.83,
-        "rotation": 2.32
       },
       {
         "position": {
@@ -13195,7 +13125,7 @@
     "hdri": "limpopo_golf_course"
   },
   "hashes": {
-    "terrain": "391aff3f83226f7346613740d23fb7fe02f0a68ad704442af7b99a586ee2dfd0",
-    "surface": "f325970c857615b325f70d1ed4c530649e8e70ac51780d26f6ec00fcf61abeb9"
+    "terrain": "c2cbc3cb5f7bd805e0be293b645be7f0e5dc430ee1bd08fca56454b3cfe396e3",
+    "surface": "b8749a62675eb1ce7ab590a7a65fa514cbc74bc942ad87062ce263d22a96d0ac"
   }
 }

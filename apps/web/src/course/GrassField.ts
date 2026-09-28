@@ -38,17 +38,27 @@ function grassy(surface: SurfaceId): boolean {
   return surface === SurfaceId.Green || surface === SurfaceId.Fairway || surface === SurfaceId.FirstCut || surface === SurfaceId.Rough;
 }
 
-function surfaceHeight(surface: SurfaceId): number {
+/** 0 = putting surface, 1 = full rough; used as a continuous cut level so turf lengths blend across mask edges. */
+function cutLevel(surface: SurfaceId): number {
   switch (surface) {
     case SurfaceId.Green:
-      return 0.03;
+      return 0;
     case SurfaceId.Fairway:
-      return 0.07;
-    case SurfaceId.FirstCut:
       return 0.15;
+    case SurfaceId.FirstCut:
+      return 0.45;
     default:
-      return 0.3;
+      return 1;
   }
+}
+
+const MIN_HEIGHT = 0.03;
+const MAX_HEIGHT = 0.3;
+const BLEND_RADII = [1.8, 3.6];
+const BLEND_SAMPLES = 6;
+
+function heightForLevel(level: number): number {
+  return MIN_HEIGHT + (MAX_HEIGHT - MIN_HEIGHT) * Math.pow(level, 1.4);
 }
 
 /** Three crossed alpha cards forming one grass cluster, base at y = 0, unit height. */
@@ -327,6 +337,26 @@ export class GrassField {
     });
   }
 
+  /**
+   * Cut level averaged over a small neighbourhood, so fairway → first cut → rough ramps over a few metres
+   * instead of switching at a mask cell, with noise so the ramp itself wanders.
+   */
+  private blendedCutLevel(x: number, z: number, surface: SurfaceId): number {
+    let sum = cutLevel(surface) * 2;
+    let weight = 2;
+    for (const radius of BLEND_RADII) {
+      for (let sample = 0; sample < BLEND_SAMPLES; sample += 1) {
+        const angle = (sample / BLEND_SAMPLES) * Math.PI * 2 + radius;
+        const neighbour = this.course.surfaceMask.surfaceAt(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius);
+        if (!grassy(neighbour)) continue;
+        sum += cutLevel(neighbour);
+        weight += 1;
+      }
+    }
+    const level = sum / weight + (valueNoise(x, z, 3, 6) - 0.5) * 0.25;
+    return Math.min(1, Math.max(0, level));
+  }
+
   private scatter(ring: Ring, ringIndex: number): void {
     const inner = ringIndex === 0 ? 0 : (RING_RADII[ringIndex - 1] ?? 0);
     const { mesh, radius, tints, combs } = ring;
@@ -339,19 +369,20 @@ export class GrassField {
       const x = cx + Math.cos(angle) * r;
       const z = cz + Math.sin(angle) * r;
       const surface = this.course.surfaceMask.surfaceAt(x, z);
+      const level = this.blendedCutLevel(x, z, surface);
       // Patch-scale variation: thin/thick density, dry/lush tone and a comb direction that drifts across the course.
       const density = valueNoise(x, z, 9, 1) * 0.6 + valueNoise(x, z, 2.5, 2) * 0.4;
       const lush = valueNoise(x, z, 14, 3);
-      const mown = surface === SurfaceId.Green || surface === SurfaceId.Fairway;
-      const rough = surface === SurfaceId.Rough;
-      const grow = grassy(surface) && density > (mown ? 0.42 : 0.24) - (ringIndex === 0 ? 0.1 : 0);
-      // Rough is uneven (wide length spread, occasional tussocks); mown turf is uniform.
-      const tussock = rough && hash(seed + 7) > 0.9;
-      const spread = rough ? 0.55 + hash(seed + 2) * 0.9 : 0.8 + hash(seed + 2) * 0.4;
+      const mown = level < 0.3;
+      const rough = level > 0.6;
+      // Mown turf is dense and even; the long stuff thins out and gets ragged the further it is from the mown edge.
+      const grow = grassy(surface) && density > (mown ? 0.42 : 0.24 + level * 0.08) - (ringIndex === 0 ? 0.1 : 0);
+      const tussock = rough && hash(seed + 7) > 1 - 0.1 * level;
+      const spread = 0.8 + hash(seed + 2) * 0.4 + level * (hash(seed + 8) - 0.35) * 0.7;
       const height = grow
-        ? surfaceHeight(surface) * spread * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1) * (tussock ? 1.5 : 1)
+        ? heightForLevel(level) * spread * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1) * (tussock ? 1.5 : 1)
         : 0;
-      const width = (0.22 + hash(seed + 3) * 0.28 + ringIndex * 0.12) * (tussock ? 1.4 : rough ? 1.15 : 1);
+      const width = (0.22 + hash(seed + 3) * 0.28 + ringIndex * 0.12) * (tussock ? 1.4 : 1 + level * 0.15);
       this.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash(seed + 4) * Math.PI * 2);
       this.scale.set(width, height, width);
       this.position.set(x, this.course.sampler.heightAt(x, z) - 0.01, z);
@@ -361,7 +392,7 @@ export class GrassField {
       // the stripe facing the light reads a touch lighter. Rough follows a slow drifting comb instead.
       const band = Math.floor((x - z) / 8);
       const stripe = ((band % 2) + 2) % 2 === 0 ? 1 : -1;
-      const dryness = rough ? hash(seed + 5) * 0.35 + (1 - lush) * 0.65 : (hash(seed + 5) * 0.5 + (1 - lush) * 0.5) * (mown ? 0.4 : 0.75);
+      const dryness = (hash(seed + 5) * 0.5 + (1 - lush) * 0.5) * (0.4 + level * 0.5);
       const shade = (0.82 + hash(seed + 6) * 0.26) * (0.9 + lush * 0.2) * (mown ? 1 + stripe * 0.05 : 1);
       tints[index * 3] = (0.66 + dryness * 0.4) * shade;
       tints[index * 3 + 1] = (0.78 + dryness * 0.08) * shade;

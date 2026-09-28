@@ -19,7 +19,7 @@ interface RegionStyle {
 }
 
 const REGION_STYLES: RegionStyle[] = [
-  { base: [0.22, 0.46, 0.17], variance: 0.05, grain: 26, roughness: 0.78, bump: 0.15 }, // green: tight, striped
+  { base: [0.27, 0.57, 0.21], variance: 0.04, grain: 26, roughness: 0.7, bump: 0.12 }, // green: tight bent, lighter and glossier than fairway
   { base: [0.24, 0.5, 0.18], variance: 0.09, grain: 14, roughness: 0.86, bump: 0.3 }, // fairway
   { base: [0.27, 0.47, 0.16], variance: 0.12, grain: 9, roughness: 0.9, bump: 0.45 }, // first cut
   { base: [0.3, 0.42, 0.16], variance: 0.16, grain: 6, roughness: 0.94, bump: 0.6 }, // rough
@@ -246,7 +246,9 @@ export function createTerrainMaterial(mask: THREE.DataTexture, maskOrigin: THREE
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          vec2 maskUv = (vTerrainWorld.xz - maskOrigin) / maskExtent;
+          // Jitter the mask lookup so mown edges break up at blade scale instead of following the cell grid.
+          vec2 jitter = vec2(terrainNoise(vTerrainWorld.xz * 0.9 + 11.0), terrainNoise(vTerrainWorld.xz * 0.9 + 47.0)) - 0.5;
+          vec2 maskUv = (vTerrainWorld.xz + jitter * 1.6 - maskOrigin) / maskExtent;
           vec2 maskSize = vec2(textureSize(splatMask, 0));
           vec2 cell = maskUv * maskSize - 0.5;
           vec2 baseCell = floor(cell);
@@ -279,8 +281,9 @@ export function createTerrainMaterial(mask: THREE.DataTexture, maskOrigin: THREE
           float stripeShade = 1.0 + (stripe - 0.5) * mix(0.14, 0.09, greenShare) * mown;
           // Slow macro variation so large areas do not read as one flat tone, plus drier straw-toned patches
           // (strongest in the rough) and 1–2 m clumps that break the rough into tussocks.
-          float macro = 0.93 + 0.14 * terrainNoise(world * 0.035) * (0.5 + 0.5 * terrainNoise(world * 0.011 + 3.7));
-          float dry = smoothstep(0.5, 0.85, terrainNoise(world * 0.021 + 7.1)) * mix(0.18, 0.5, roughShare);
+          float macroAmount = mix(0.14, 0.05, mown);
+          float macro = 1.0 - macroAmount * 0.5 + macroAmount * terrainNoise(world * 0.035) * (0.5 + 0.5 * terrainNoise(world * 0.011 + 3.7));
+          float dry = smoothstep(0.5, 0.85, terrainNoise(world * 0.021 + 7.1)) * mix(mix(0.12, 0.03, mown), 0.5, roughShare);
           float clumps = 1.0 - roughShare * 0.14 * terrainNoise(world * 0.7 + 1.3) - roughShare * 0.08 * terrainNoise(world * 2.3);
           vec3 albedo = mix(albedoMix.rgb, albedoMix.rgb * vec3(1.14, 1.05, 0.72), dry);
           diffuseColor.rgb = albedo * stripeShade * macro * clumps * (1.0 - wet * 0.35);

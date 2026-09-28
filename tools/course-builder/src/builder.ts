@@ -10,6 +10,8 @@ export interface SourceCourse extends Omit<CourseManifest, 'heightfield' | 'surf
     noise: { seed: number; amplitude: number; frequency: number; octaves: number };
     /** Fine undulation layered on the rolling base (defaults: 0.35 m at ~22 m wavelength). */
     detail?: { amplitude: number; frequency: number };
+    /** Mid-scale rolling (defaults: 0.9 m at ~55 m wavelength) so fairways rise and fall along their length. */
+    roll?: { amplitude: number; frequency: number };
     /** Fairways sit a little proud along their centreline and fall away to the edges (metres, default 0.3). */
     fairwayCrown?: number;
     mounds: { x: number; z: number; radius: number; height: number }[];
@@ -46,6 +48,20 @@ const TEE_COLLAR_M = 2.5;
 const EDGE_WANDER = 0.16;
 const EDGE_WANDER_FREQUENCY = 0.035;
 const DETAIL_DEFAULT = { amplitude: 0.35, frequency: 0.045 };
+const ROLL_DEFAULT = { amplitude: 0.9, frequency: 0.018 };
+/** Greens sit this far above the mean surrounding terrain, blended back down over GREEN_PAD_BLEND metres. */
+const GREEN_PAD_RISE = 0.55;
+const GREEN_PAD_BLEND = 7;
+/**
+ * Every hole is graded like a real one: the tee complex sits up, the green is a raised target, and along the fairway
+ * corridor the macro relief is blended toward that straight tee->green profile so the green stays in sight from the
+ * tee. Only a share of the macro relief survives on the fairway; detail noise and the crown still undulate it.
+ */
+const GRADE_TEE_RISE = 1.2;
+const GRADE_GREEN_RISE = 1.1;
+const GRADE_KEEP = 0.35;
+const GRADE_MARGIN_M = 8;
+const GRADE_BLEND_M = 16;
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
@@ -211,7 +227,11 @@ function classifySurface(x: number, z: number, features: CourseFeatures, wander?
   for (const spline of features.fairways) {
     const edge = splineEdgeDistance(x, z, spline, wander);
     if (edge <= 0) surface = spline.surface;
-    else if (spline.edgeSurface !== undefined && edge <= (spline.edgeWidth ?? 0)) surface = spline.edgeSurface;
+    else if (spline.edgeSurface !== undefined) {
+      // The intermediate cut breathes between roughly half and one-and-a-half times its nominal width.
+      const collar = (spline.edgeWidth ?? 0) * (wander ? 1 + fbm(wander, x + 500, z - 500, EDGE_WANDER_FREQUENCY * 1.7, 2) * 0.6 : 1);
+      if (edge <= collar) surface = spline.edgeSurface;
+    }
   }
   for (const spline of features.paths ?? []) {
     if (splineNearest(x, z, spline).distance <= Math.max(...spline.widths, 1) / 2) surface = spline.surface;
@@ -249,15 +269,91 @@ function polygonSignedDistance(x: number, z: number, polygon: Polygon): number {
   return pointInPolygon(x, z, polygon) ? -distance : distance;
 }
 
-function baseHeightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
+/** Large-scale relief only: base level, macro noise, rolling swells and authored mounds. */
+function macroHeightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
   const terrain = source.terrain;
-  const detail = terrain.detail ?? DETAIL_DEFAULT;
+  const roll = terrain.roll ?? ROLL_DEFAULT;
   let height = terrain.baseHeight + terrain.noise.amplitude * fbm(noise, x, z, terrain.noise.frequency, terrain.noise.octaves);
-  height += detail.amplitude * fbm(noise, x + 1000, z - 1000, detail.frequency, 3);
+  height += roll.amplitude * fbm(noise, x - 2000, z + 2000, roll.frequency, 2);
   for (const mound of terrain.mounds) {
     const distance = Math.hypot(x - mound.x, z - mound.z);
     if (distance < mound.radius) height += mound.height * (1 - distance / mound.radius) ** 2;
   }
+  return height;
+}
+
+interface HoleGrade {
+  tee: { x: number; z: number };
+  cup: { x: number; z: number };
+  teeHeight: number;
+  cupHeight: number;
+  fairway: Spline | undefined;
+}
+
+const holeGrades = new WeakMap<SourceCourse, HoleGrade[]>();
+
+function gradesOf(source: SourceCourse, noise: SimplexNoise): HoleGrade[] {
+  let grades = holeGrades.get(source);
+  if (grades) return grades;
+  grades = [];
+  for (const hole of source.holes) {
+    const back = hole.tees[0]?.position;
+    if (!back) continue;
+    const tee = { x: back.x, z: back.z };
+    const cup = { x: hole.cup.x, z: hole.cup.z };
+    let fairway: Spline | undefined;
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const spline of source.features.fairways) {
+      const first = spline.points[0];
+      if (!first) continue;
+      const distance = Math.hypot(first.x - tee.x, first.z - tee.z);
+      if (distance < nearest) {
+        nearest = distance;
+        fairway = spline;
+      }
+    }
+    grades.push({
+      tee,
+      cup,
+      teeHeight: macroHeightAt(source, noise, tee.x, tee.z) + GRADE_TEE_RISE,
+      cupHeight: macroHeightAt(source, noise, cup.x, cup.z) + GRADE_GREEN_RISE,
+      fairway,
+    });
+  }
+  holeGrades.set(source, grades);
+  return grades;
+}
+
+function gradedMacroHeightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
+  let height = macroHeightAt(source, noise, x, z);
+  for (const grade of gradesOf(source, noise)) {
+    const dx = grade.cup.x - grade.tee.x;
+    const dz = grade.cup.z - grade.tee.z;
+    const length2 = dx * dx + dz * dz;
+    const along = length2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - grade.tee.x) * dx + (z - grade.tee.z) * dz) / length2));
+    let distance = distanceToSegment(x, z, grade.tee, grade.cup);
+    let half = TEE_STRIP_HALF_WIDTH_M;
+    if (grade.fairway) {
+      const nearest = splineNearest(x, z, grade.fairway);
+      const fairwayHalf = nearest.width / 2 + (grade.fairway.edgeWidth ?? 0);
+      if (nearest.distance - fairwayHalf < distance - half) {
+        distance = nearest.distance;
+        half = fairwayHalf;
+      }
+    }
+    const weight = (1 - smoothstep(half + GRADE_MARGIN_M, half + GRADE_MARGIN_M + GRADE_BLEND_M, distance)) * (1 - GRADE_KEEP);
+    if (weight <= 0) continue;
+    const target = grade.teeHeight + (grade.cupHeight - grade.teeHeight) * along;
+    height += (target - height) * weight;
+  }
+  return height;
+}
+
+function baseHeightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
+  const terrain = source.terrain;
+  const detail = terrain.detail ?? DETAIL_DEFAULT;
+  let height = gradedMacroHeightAt(source, noise, x, z);
+  height += detail.amplitude * fbm(noise, x + 1000, z - 1000, detail.frequency, 3);
   for (const spline of source.features.fairways) {
     const nearest = splineNearest(x, z, spline);
     const half = nearest.width / 2 + (spline.edgeWidth ?? 0) + 4;
@@ -410,30 +506,40 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
   const features: CourseFeatures = { ...source.features, water: waterPolygons };
   const water = waterPolygons.map((polygon) => ({ polygon, level: waterLevelOf(source, noise, polygon) }));
   const height = new Float32Array(width * depth);
-  let minHeight = Number.POSITIVE_INFINITY;
-  let maxHeight = Number.NEGATIVE_INFINITY;
   for (let iz = 0; iz < depth; iz += 1) {
     for (let ix = 0; ix < width; ix += 1) {
-      const value = heightAt(source, noise, water, ix * source.heightCellSize, iz * source.heightCellSize);
-      height[iz * width + ix] = value;
-      minHeight = Math.min(minHeight, value);
-      maxHeight = Math.max(maxHeight, value);
+      height[iz * width + ix] = heightAt(source, noise, water, ix * source.heightCellSize, iz * source.heightCellSize);
     }
   }
   if (source.terrain.greenFlatten) {
+    const hazards = [...source.features.bunkers, ...waterPolygons];
     for (const green of source.features.greens) {
       const target = green.points.reduce(
         (sum, point) => sum + heightAt(source, noise, water, point.x, point.z),
         0,
       ) / Math.max(1, green.points.length);
+      // Push-up green: the putting surface sits a little proud on a levelled pad whose surrounds blend back
+      // into the rolling terrain over a few metres instead of stepping off at the polygon edge.
+      const pad = target + GREEN_PAD_RISE;
       for (let iz = 0; iz < depth; iz += 1) {
         for (let ix = 0; ix < width; ix += 1) {
-          if (pointInPolygon(ix * source.heightCellSize, iz * source.heightCellSize, green)) {
-            height[iz * width + ix] = target;
-          }
+          const x = ix * source.heightCellSize;
+          const z = iz * source.heightCellSize;
+          const signed = polygonSignedDistance(x, z, green);
+          if (signed > GREEN_PAD_BLEND) continue;
+          if (signed > 0 && hazards.some((hazard) => pointInPolygon(x, z, hazard))) continue;
+          const blend = signed <= 0 ? 1 : 1 - smoothstep(0, GREEN_PAD_BLEND, signed);
+          const index = iz * width + ix;
+          height[index] = height[index]! + (pad - height[index]!) * blend;
         }
       }
     }
+  }
+  let minHeight = Number.POSITIVE_INFINITY;
+  let maxHeight = Number.NEGATIVE_INFINITY;
+  for (const value of height) {
+    minHeight = Math.min(minHeight, value);
+    maxHeight = Math.max(maxHeight, value);
   }
   const surface = new Uint8Array(maskWidth * maskDepth);
   for (let iz = 0; iz < maskDepth; iz += 1) {

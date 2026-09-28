@@ -163,12 +163,31 @@ function generateTree(kind: TreeKind, seed: number, detail: MeshDetail): { tree:
 }
 
 /**
+ * Alpha-tested foliage thins out with distance because mip filtering averages leaf alpha toward zero. Scaling alpha
+ * back up by the sampled mip level (and biasing the lookup half a level sharper) keeps far canopies at full coverage
+ * so silhouettes stay solid and recognisable instead of dissolving into a soft speckle.
+ */
+const FOLIAGE_MAP_FRAGMENT = `
+  #ifdef USE_MAP
+  {
+    vec2 texel = vMapUv * vec2(textureSize(map, 0));
+    vec2 dx = dFdx(texel);
+    vec2 dy = dFdy(texel);
+    float lod = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
+    vec4 sampledDiffuseColor = texture(map, vMapUv, -0.5);
+    sampledDiffuseColor.a = clamp(sampledDiffuseColor.a * (1.0 + lod * 0.4), 0.0, 1.0);
+    diffuseColor *= sampledDiffuseColor;
+  }
+  #endif`;
+
+/**
  * Camera-facing card whose size and yaw come from the instance matrix. The fragment samples the atlas column whose
  * baked view best matches the direction the camera sees this tree from, so silhouettes change as the camera orbits.
  */
 function impostorMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
   const material = new THREE.MeshBasicMaterial({ map, alphaTest: 0.35, side: THREE.DoubleSide, transparent: false });
   material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', FOLIAGE_MAP_FRAGMENT);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\nconst float IMPOSTOR_VIEWS = ${IMPOSTOR_VIEWS}.0;`)
       .replace(
@@ -263,7 +282,7 @@ export class Vegetation {
         shader.uniforms.uWindTime = wind;
         shader.uniforms.uSunDirection = sunDirection;
         // Leaves transmit light: canopies between the camera and the sun glow warm instead of going flat and dark.
-        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uSunDirection;').replace(
+        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uSunDirection;').replace('#include <map_fragment>', FOLIAGE_MAP_FRAGMENT).replace(
           '#include <lights_fragment_end>',
           `#include <lights_fragment_end>
           {

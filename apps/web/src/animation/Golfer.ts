@@ -21,6 +21,50 @@ function limb(material: THREE.Material, radius: number, length: number): THREE.M
   return mesh;
 }
 
+/**
+ * Authored GLB materials arrive as plain metal/rough; skin, knit and leather get physically distinct responses so
+ * the character stops reading as one plastic surface: skin has a soft peach-fuzz sheen and lower roughness on the
+ * highlights, fabric a matte sheen that catches rim light, shoes a thin clearcoat over grained leather.
+ */
+function characterMaterial(source: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
+  const name = source.name;
+  let physical: THREE.MeshPhysicalMaterial | undefined;
+  if (/body|glove/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.roughness = /glove/i.test(name) ? 0.62 : 0.5;
+    physical.sheen = /glove/i.test(name) ? 0.25 : 0.55;
+    physical.sheenRoughness = 0.7;
+    physical.sheenColor.set(/glove/i.test(name) ? 0xf4efe6 : 0xffd1b8);
+    physical.specularIntensity = 0.6;
+  } else if (/polo|pants|cap|belt/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.sheen = 0.5;
+    physical.sheenRoughness = 0.85;
+    physical.sheenColor.set(0xffffff);
+    physical.specularIntensity = 0.45;
+    if (physical.normalMap) physical.normalScale.setScalar(/pants/i.test(name) ? 1.3 : 1.0);
+  } else if (/shoes/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.roughness = 0.45;
+    physical.clearcoat = 0.35;
+    physical.clearcoatRoughness = 0.35;
+  } else if (/hair/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.roughness = 0.45;
+    physical.sheen = 0.6;
+    physical.sheenRoughness = 0.4;
+    physical.sheenColor.set(0x8a6a48);
+  }
+  if (!physical) return source;
+  physical.name = name;
+  source.dispose();
+  return physical;
+}
+
 /** Simple jointed mannequin using Mixamo-style bone names so a real GLB rig can replace it 1:1. */
 function proceduralGolfer(): THREE.Group {
   const group = new THREE.Group();
@@ -145,7 +189,7 @@ export class Golfer {
     void loader
       .loadAsync(GOLFER_MODEL)
       .then((asset) => this.adoptModel(asset.scene, asset.animations))
-      .catch(() => undefined);
+      .catch((error: unknown) => console.warn('golfer model unavailable, using mannequin', error));
   }
 
   /** Replaces the mannequin with an authored GLB on a Mixamo-named skeleton; authored clips win by name. */
@@ -157,10 +201,15 @@ export class Golfer {
         object.castShadow = true;
         object.receiveShadow = true;
         object.frustumCulled = false;
-        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        const materials = (Array.isArray(object.material) ? object.material : [object.material]).map((material) =>
+          material instanceof THREE.MeshStandardMaterial ? characterMaterial(material) : material,
+        );
+        object.material = Array.isArray(object.material) ? materials : materials[0]!;
         for (const material of materials) {
           if (material instanceof THREE.MeshStandardMaterial) {
-            material.envMapIntensity = 0.7;
+            // Image-based fill is scaled up on the character so the shaded side of the face, arms and the dark polo
+            // stay readable against the sunlit turf without lifting the whole scene's ambient.
+            material.envMapIntensity = 1.9;
             if (!/buckle/i.test(material.name)) material.metalness = 0;
             if (material.map) material.map.anisotropy = 8;
             if (material.transparent && /hair|eyebrow|eyelash/i.test(material.name)) {
