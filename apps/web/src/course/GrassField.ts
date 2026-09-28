@@ -99,13 +99,13 @@ function grassAtlas(): THREE.Texture {
         const height = size * (0.5 + hash(seed * 1.7) * 0.45);
         const lean = (hash(seed * 5.1) - 0.5) * 90;
         const halfWidth = 2.5 + hash(seed * 7.7) * 3;
-        const hue = 76 + hash(seed) * 22;
-        const light = 43 + hash(seed * 2.9) * 14;
+        const hue = 84 + hash(seed) * 20;
+        const light = 36 + hash(seed * 2.9) * 12;
         // Base→tip gradient: shaded near the soil, lit at the tip, with the same yellow-green hue as the turf albedo.
         const gradient = context.createLinearGradient(0, size, 0, size - height);
-        gradient.addColorStop(0, `hsl(${hue}, 42%, ${light - 6}%)`);
-        gradient.addColorStop(0.55, `hsl(${hue}, 46%, ${light}%)`);
-        gradient.addColorStop(1, `hsl(${hue + 4}, 50%, ${light + 12}%)`);
+        gradient.addColorStop(0, `hsl(${hue}, 36%, ${light - 6}%)`);
+        gradient.addColorStop(0.55, `hsl(${hue}, 40%, ${light}%)`);
+        gradient.addColorStop(1, `hsl(${hue + 4}, 42%, ${light + 9}%)`);
         context.fillStyle = gradient;
         context.beginPath();
         context.moveTo(x - halfWidth, size);
@@ -124,6 +124,16 @@ function grassAtlas(): THREE.Texture {
     }
   }
   const pixels = context?.getImageData(0, 0, width, size).data ?? new Uint8ClampedArray(width * size * 4);
+  // Transparent texels carry the mid blade tone (not black) so mip levels and linear filtering at distance
+  // never darken the alpha-tested edges into speckle.
+  const fill = new THREE.Color().setHSL(94 / 360, 0.4, 0.42, THREE.SRGBColorSpace).getRGB(new THREE.Color(), THREE.SRGBColorSpace);
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3] === 0) {
+      pixels[i] = Math.round(fill.r * 255);
+      pixels[i + 1] = Math.round(fill.g * 255);
+      pixels[i + 2] = Math.round(fill.b * 255);
+    }
+  }
   const texture = new THREE.DataTexture(new Uint8Array(pixels.buffer), width, size, THREE.RGBAFormat, THREE.UnsignedByteType);
   texture.flipY = true;
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -143,6 +153,10 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
       sunDirection: { value: sunDirection.clone().normalize() },
       fogColor: { value: fog?.color ?? new THREE.Color(0x9bb5c4) },
       fogDensity: { value: fog?.density ?? 0 },
+      shadowMap: { value: null },
+      shadowMatrix: { value: new THREE.Matrix4() },
+      shadowTexel: { value: 1 / 2048 },
+      shadowRange: { value: 0 },
     },
     side: THREE.DoubleSide,
     transparent: false,
@@ -159,7 +173,9 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
       varying float vFogDepth;
       varying vec3 vNormal;
       varying vec3 vViewDir;
+      varying vec4 vShadowCoord;
       uniform float time;
+      uniform mat4 shadowMatrix;
       void main() {
         vUv = vec2((uv.x + variant) / ${ATLAS_VARIANTS.toFixed(1)}, uv.y);
         vTint = tint;
@@ -176,6 +192,7 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
         world.z += (comb.y + gust * 0.06 + cos(phase) * lean * 0.5) * h2;
         vec4 view = viewMatrix * world;
         vFogDepth = -view.z;
+        vShadowCoord = shadowMatrix * vec4(world.xyz + vec3(0.0, 0.03, 0.0), 1.0);
         gl_Position = projectionMatrix * view;
       }
     `,
@@ -186,24 +203,48 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
       varying float vFogDepth;
       varying vec3 vNormal;
       varying vec3 vViewDir;
+      varying vec4 vShadowCoord;
       uniform sampler2D map;
       uniform vec3 fogColor;
       uniform float fogDensity;
       uniform vec3 sunDirection;
+      uniform sampler2D shadowMap;
+      uniform float shadowTexel;
+      uniform float shadowRange;
+      #include <packing>
+      float shadowTap(vec2 uv, float depth) {
+        return step(depth, unpackRGBAToDepth(texture2D(shadowMap, uv)));
+      }
+      // Single-cascade lookup into the sun's nearest CSM shadow map (blades live within its range).
+      float sunShadow() {
+        if (shadowRange <= 0.0 || vFogDepth > shadowRange) return 1.0;
+        vec3 coord = vShadowCoord.xyz / vShadowCoord.w;
+        if (any(lessThan(coord, vec3(0.0))) || any(greaterThan(coord, vec3(1.0)))) return 1.0;
+        float depth = coord.z - 0.0002;
+        float sum = 0.0;
+        sum += shadowTap(coord.xy + vec2(-shadowTexel, -shadowTexel), depth);
+        sum += shadowTap(coord.xy + vec2(shadowTexel, -shadowTexel), depth);
+        sum += shadowTap(coord.xy + vec2(-shadowTexel, shadowTexel), depth);
+        sum += shadowTap(coord.xy + vec2(shadowTexel, shadowTexel), depth);
+        return sum * 0.25;
+      }
       void main() {
         vec4 tex = texture2D(map, vUv);
-        if (tex.a < 0.4) discard;
+        float far = smoothstep(12.0, 55.0, vFogDepth);
+        // Distant blades thin out (higher alpha cut) instead of collapsing into dark speckle.
+        if (tex.a < mix(0.4, 0.7, far)) discard;
         float ao = mix(0.68, 1.0, vHeight);
         vec3 n = gl_FrontFacing ? vNormal : -vNormal;
         n = normalize(mix(n, vec3(0.0, 1.0, 0.0), 0.7));
         float diffuse = max(dot(n, sunDirection), 0.0);
         // Thin blades transmit light: brighten tips when the sun is behind them.
         float translucency = pow(max(dot(-vViewDir, sunDirection), 0.0), 3.0) * vHeight * 0.35;
-        vec3 sun = vec3(1.0, 0.95, 0.86) * (diffuse * 0.75 + translucency);
-        vec3 sky = vec3(0.62, 0.72, 0.8) * 0.55;
-        vec3 color = tex.rgb * vTint * (sun + sky) * ao * 1.25;
+        vec3 sun = vec3(1.0, 0.95, 0.86) * (diffuse * 1.1 + translucency) * sunShadow();
+        vec3 sky = vec3(0.62, 0.72, 0.8) * 0.4;
+        vec3 color = tex.rgb * vTint * (sun + sky) * ao * 0.95;
         // Far blades lose contrast so sparse distant clusters read as ground texture rather than speckle.
-        color = mix(color, color * 1.15 + vec3(0.01, 0.02, 0.005), smoothstep(12.0, 55.0, vFogDepth));
+        float luma = dot(color, vec3(0.3, 0.59, 0.11));
+        color = mix(color, mix(color, vec3(luma), 0.35) * 1.15 / mix(1.0, ao, 0.6), far);
         float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
         gl_FragColor = vec4(mix(color, fogColor, fogFactor), 1.0);
       }
@@ -266,13 +307,23 @@ export class GrassField {
     });
   }
 
-  update(cameraPosition: THREE.Vector3, time: number): void {
+  update(cameraPosition: THREE.Vector3, time: number, shadowLight?: THREE.DirectionalLight): void {
     if (Number.isNaN(this.center.x) || this.center.distanceTo(cameraPosition) > RECENTER_DISTANCE) {
       this.center.copy(cameraPosition);
       this.rings.forEach((ring, ringIndex) => this.scatter(ring, ringIndex));
     }
+    const shadow = shadowLight?.shadow;
+    const shadowCamera = shadow?.camera;
+    const range = shadowCamera instanceof THREE.OrthographicCamera ? shadowCamera.right - shadowCamera.left : 0;
     this.materials.forEach((material) => {
-      if (material.uniforms.time) material.uniforms.time.value = time;
+      const uniforms = material.uniforms;
+      if (uniforms.time) uniforms.time.value = time;
+      if (shadow && uniforms.shadowMap && uniforms.shadowMatrix && uniforms.shadowTexel && uniforms.shadowRange) {
+        uniforms.shadowMap.value = shadow.map?.texture ?? null;
+        (uniforms.shadowMatrix.value as THREE.Matrix4).copy(shadow.matrix);
+        uniforms.shadowTexel.value = 1 / shadow.mapSize.x;
+        uniforms.shadowRange.value = shadow.map ? range * 0.5 : 0;
+      }
     });
   }
 

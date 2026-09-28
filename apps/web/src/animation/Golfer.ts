@@ -161,6 +161,7 @@ export class Golfer {
         for (const material of materials) {
           if (material instanceof THREE.MeshStandardMaterial) {
             material.envMapIntensity = 0.7;
+            material.metalness = 0;
             if (material.map) material.map.anisotropy = 8;
             if (material.transparent && /hair|eyebrow|eyelash/i.test(material.name)) {
               // Alpha-tested strands write depth so hair never shows the scalp through itself or sorts behind the face.

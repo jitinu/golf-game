@@ -242,8 +242,9 @@ export class App {
       const ballPosition = this.ball?.mesh.position ?? this.session.ballPosition;
       this.camera.update({ x: ballPosition.x, y: ballPosition.y, z: ballPosition.z }, pin, this.session.aimYaw, dt);
       this.ball?.frame(this.renderer.camera, this.canvas.clientHeight || window.innerHeight);
+      this.environment?.update();
       if (this.courseScene) {
-        this.courseScene.grass.update(this.renderer.camera.position, now / 1000);
+        this.courseScene.grass.update(this.renderer.camera.position, now / 1000, this.environment?.nearShadowLight());
         this.courseScene.vegetation.update(this.renderer.camera.position, dt);
         this.courseScene.water.update(now / 1000);
         this.courseScene.flag.update(now / 1000);
@@ -251,7 +252,6 @@ export class App {
           this.courseScene.debug.updateReadout(this.session.course, new THREE.Vector3(ballPosition.x, ballPosition.y, ballPosition.z));
         }
       }
-      this.environment?.update();
       this.renderer.render();
       this.ui.stats.update(this.renderer.renderer.info.render.calls, this.renderer.renderer.info.render.triangles, dtMs);
     } catch (error) {

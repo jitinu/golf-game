@@ -36,7 +36,7 @@ export class Environment {
       shadowMapSize: 2048,
       mode: 'practical',
       maxFar: 350,
-      lightIntensity: 1.9,
+      lightIntensity: 3.4,
       lightDirection: this.sunDirection.clone().negate(),
       parent: scene,
     });
@@ -47,13 +47,24 @@ export class Environment {
       light.shadow.radius = 3;
     }
     scene.fog = new THREE.FogExp2(0xc3d0d8, 0.0004);
-    this.hemisphere = new THREE.HemisphereLight(0xc6dbe6, 0x4f6a3c, 0.75);
+    this.hemisphere = new THREE.HemisphereLight(0xc6dbe6, 0x4f6a3c, 0.6);
     scene.add(this.hemisphere);
     void this.loadSky(manifest, preset);
   }
 
   update(): void {
+    this.camera.updateMatrixWorld();
     this.csm.update();
+    for (const light of this.csm.lights) {
+      light.updateMatrixWorld();
+      light.target.updateMatrixWorld();
+      light.shadow.updateMatrices(light);
+    }
+  }
+
+  /** The tightest cascade; its shadow map covers roughly the first 60 m in front of the camera. */
+  nearShadowLight(): THREE.DirectionalLight | undefined {
+    return this.csm.lights[0];
   }
 
   setupMaterial(material: THREE.Material): void {
@@ -78,12 +89,12 @@ export class Environment {
       texture.mapping = THREE.EquirectangularReflectionMapping;
       const generated = this.pmrem.fromEquirectangular(texture).texture;
       this.scene.environment = generated;
-      this.scene.environmentIntensity = 0.55;
+      this.scene.environmentIntensity = 0.38;
       this.scene.background = texture;
       this.scene.backgroundIntensity = 0.9;
       this.scene.backgroundBlurriness = 0;
       // Image-based light replaces most of the ambient fill; a little sky/ground bounce keeps shadows from going flat.
-      this.hemisphere.intensity = 0.3;
+      this.hemisphere.intensity = 0.18;
     } catch {
       const environment = new RoomEnvironment();
       const generated = this.pmrem.fromScene(environment).texture;

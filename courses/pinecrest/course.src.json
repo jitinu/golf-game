@@ -906,7 +906,7 @@
   },
   "environment": {
     "sunAzimuthDeg": 54,
-    "sunElevationDeg": 28,
+    "sunElevationDeg": 36,
     "hdri": "limpopo_golf_course"
   },
   "treeScatter": {
