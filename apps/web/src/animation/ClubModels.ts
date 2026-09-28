@@ -31,11 +31,13 @@ export function clubSpec(club: ClubDef): ClubSpec {
   return specForCategory(club.category);
 }
 
-const steel = new THREE.MeshPhysicalMaterial({ color: 0xd9dde2, metalness: 1, roughness: 0.28 });
-const satin = new THREE.MeshPhysicalMaterial({ color: 0xc4c9cf, metalness: 1, roughness: 0.45 });
-const face = new THREE.MeshPhysicalMaterial({ color: 0x8f969e, metalness: 1, roughness: 0.55 });
-const crown = new THREE.MeshPhysicalMaterial({ color: 0x0b0f14, metalness: 0.2, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.08 });
-const carbon = new THREE.MeshPhysicalMaterial({ color: 0x1a1d22, metalness: 0.6, roughness: 0.35, clearcoat: 0.6 });
+// Slightly under-unity metalness plus a boosted env contribution keeps chrome and satin steel readable against
+// turf under a low sun, where pure metal with a dim ground reflection turns to a black silhouette.
+const steel = new THREE.MeshPhysicalMaterial({ color: 0xdfe3e8, metalness: 0.92, roughness: 0.26, envMapIntensity: 1.5 });
+const satin = new THREE.MeshPhysicalMaterial({ color: 0xcdd2d8, metalness: 0.9, roughness: 0.42, envMapIntensity: 1.5 });
+const face = new THREE.MeshPhysicalMaterial({ color: 0x9aa1a9, metalness: 0.9, roughness: 0.5, envMapIntensity: 1.4 });
+const crown = new THREE.MeshPhysicalMaterial({ color: 0x151b22, metalness: 0.2, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.4 });
+const carbon = new THREE.MeshPhysicalMaterial({ color: 0x23272d, metalness: 0.6, roughness: 0.35, clearcoat: 0.6, envMapIntensity: 1.3 });
 const rubber = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.92 });
 const gripCap = new THREE.MeshStandardMaterial({ color: 0xe8e4dc, roughness: 0.7 });
 const ferruleMaterial = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.4 });
@@ -155,6 +157,7 @@ export function createClubModel(club: ClubDef): THREE.Group {
   // Sole flat on the ground when the shaft leans at the lie angle: tilt the head about the face normal.
   head.rotation.x = Math.PI / 2 - spec.lie;
   head.position.y = -spec.length;
+  head.name = 'ClubHead';
   group.add(head);
   group.traverse((object) => {
     if (object instanceof THREE.Mesh) {

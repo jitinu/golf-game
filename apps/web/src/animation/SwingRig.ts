@@ -14,6 +14,16 @@ interface RestPose {
   position: THREE.Vector3;
   /** Rest orientation relative to the rig root. */
   world: THREE.Quaternion;
+  /** Rest position relative to the rig root. */
+  worldPosition: THREE.Vector3;
+}
+
+/** Rest-pose hand axes in character space. */
+export interface HandFrame {
+  fingers: THREE.Vector3;
+  palm: THREE.Vector3;
+  /** `fingers × palm`: the knuckle line, thumb side positive; fingers curl about it. */
+  across: THREE.Vector3;
 }
 
 const tmpQ = new THREE.Quaternion();
@@ -25,6 +35,7 @@ export class SwingRig {
   readonly bones = new Map<string, THREE.Object3D>();
   private readonly rest = new Map<THREE.Object3D, RestPose>();
   private readonly rootWorldInverse = new THREE.Quaternion();
+  private readonly handFrames = new Map<string, HandFrame>();
 
   constructor(readonly root: THREE.Object3D) {
     root.updateWorldMatrix(true, true);
@@ -36,8 +47,48 @@ export class SwingRig {
       this.bones.set(name, object);
       const world = new THREE.Quaternion();
       object.getWorldQuaternion(world).premultiply(this.rootWorldInverse);
-      this.rest.set(object, { quaternion: object.quaternion.clone(), position: object.position.clone(), world });
+      const worldPosition = root.worldToLocal(object.getWorldPosition(new THREE.Vector3()));
+      this.rest.set(object, { quaternion: object.quaternion.clone(), position: object.position.clone(), world, worldPosition });
     });
+  }
+
+  restPosition(bone: THREE.Object3D, out = new THREE.Vector3()): THREE.Vector3 {
+    const rest = this.rest.get(bone);
+    return rest ? out.copy(rest.worldPosition) : out.set(0, 0, 0);
+  }
+
+  /**
+   * Rest hand axes derived from the finger geometry (middle finger direction, index→pinky knuckle line), so rigs with
+   * arbitrary bone rolls still grip correctly. Falls back to Mixamo's local convention (+Y fingers, +Z palm).
+   */
+  handFrame(side: 'Left' | 'Right'): HandFrame {
+    const cached = this.handFrames.get(side);
+    if (cached) return cached;
+    const hand = this.bone(`${side}Hand`);
+    const restQ = hand ? this.restWorld(hand) : new THREE.Quaternion();
+    const fingers = new THREE.Vector3(0, 1, 0).applyQuaternion(restQ);
+    const palm = new THREE.Vector3(0, 0, 1).applyQuaternion(restQ);
+    const middle = this.bone(`${side}HandMiddle1`);
+    const index = this.bone(`${side}HandIndex1`);
+    const pinky = this.bone(`${side}HandPinky1`);
+    if (hand && middle && index && pinky) {
+      const direction = this.restPosition(middle).sub(this.restPosition(hand, tmpV));
+      const knuckles = this.restPosition(index).sub(this.restPosition(pinky, tmpV));
+      if (direction.lengthSq() > 1e-8 && knuckles.lengthSq() > 1e-8) {
+        fingers.copy(direction).normalize();
+        knuckles.addScaledVector(fingers, -knuckles.dot(fingers));
+        // Right hand: palm = knuckles × fingers (thumb up, palm inward); mirrored for the left.
+        palm.crossVectors(knuckles, fingers).multiplyScalar(side === 'Right' ? 1 : -1).normalize();
+      }
+    }
+    const frame = { fingers, palm, across: fingers.clone().cross(palm).normalize() };
+    this.handFrames.set(side, frame);
+    return frame;
+  }
+
+  /** Character-space rest axis expressed in a bone's local frame (for `applyLocal`). */
+  localAxis(bone: THREE.Object3D, axis: THREE.Vector3, out = new THREE.Vector3()): THREE.Vector3 {
+    return out.copy(axis).applyQuaternion(tmpQ.copy(this.restWorld(bone)).invert()).normalize();
   }
 
   bone(name: string): THREE.Object3D | undefined {

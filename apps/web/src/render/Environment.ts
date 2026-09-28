@@ -36,17 +36,18 @@ export class Environment {
       shadowMapSize: 2048,
       mode: 'practical',
       maxFar: 350,
-      lightIntensity: 2.3,
+      lightIntensity: 1.9,
       lightDirection: this.sunDirection.clone().negate(),
       parent: scene,
     });
     for (const light of this.csm.lights) {
-      light.color.set(0xfff1dc);
-      light.shadow.normalBias = 0.04;
-      light.shadow.bias = -0.0002;
+      light.color.set(0xfff3e3);
+      light.shadow.normalBias = 0.03;
+      light.shadow.bias = -0.00015;
+      light.shadow.radius = 3;
     }
-    scene.fog = new THREE.FogExp2(0xbccbd4, 0.00045);
-    this.hemisphere = new THREE.HemisphereLight(0xbfd6df, 0x50603f, 0.7);
+    scene.fog = new THREE.FogExp2(0xc3d0d8, 0.0004);
+    this.hemisphere = new THREE.HemisphereLight(0xc6dbe6, 0x4f6a3c, 0.75);
     scene.add(this.hemisphere);
     void this.loadSky(manifest, preset);
   }
@@ -77,12 +78,12 @@ export class Environment {
       texture.mapping = THREE.EquirectangularReflectionMapping;
       const generated = this.pmrem.fromEquirectangular(texture).texture;
       this.scene.environment = generated;
-      this.scene.environmentIntensity = 0.4;
+      this.scene.environmentIntensity = 0.55;
       this.scene.background = texture;
       this.scene.backgroundIntensity = 0.9;
       this.scene.backgroundBlurriness = 0;
-      // Image-based light replaces most of the ambient fill.
-      this.hemisphere.intensity = 0.2;
+      // Image-based light replaces most of the ambient fill; a little sky/ground bounce keeps shadows from going flat.
+      this.hemisphere.intensity = 0.3;
     } catch {
       const environment = new RoomEnvironment();
       const generated = this.pmrem.fromScene(environment).texture;

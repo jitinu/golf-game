@@ -4,6 +4,7 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { ClubDef } from '@golf/sim';
 import type { Environment } from '../render/Environment.js';
+import { createContactBlob } from '../render/ContactShadow.js';
 import { CLUB_MATERIALS, clubSpec, createClubModel, specForCategory } from './ClubModels.js';
 import { bakeCelebration, bakeSwing, IMPACT_TIME, stanceDistance, type ClipName, type SwingType } from './SwingBaker.js';
 import { SwingRig } from './SwingRig.js';
@@ -123,9 +124,13 @@ export class Golfer {
   private pending: { resolve: () => void; impactAt: number; elapsed: number; fired: boolean } | undefined;
   private readonly clips = new Map<string, THREE.AnimationClip>();
   private readonly authored = new Map<string, THREE.AnimationClip>();
+  /** Ground-contact darkening under each shoe and the club head, in `group` space (origin at ground level). */
+  private readonly footBlobs = { Left: createContactBlob(0.13, 0.2, 0.55), Right: createContactBlob(0.13, 0.2, 0.55) };
+  private readonly clubBlob = createContactBlob(0.09, 0.08, 0.45);
 
   constructor(renderer?: THREE.WebGLRenderer, private readonly environment?: Environment) {
     this.clubPivot.name = 'ClubPivot';
+    this.group.add(this.footBlobs.Left, this.footBlobs.Right, this.clubBlob);
     this.root = proceduralGolfer();
     this.root.add(this.clubPivot);
     this.group.add(this.root);
@@ -157,6 +162,12 @@ export class Golfer {
           if (material instanceof THREE.MeshStandardMaterial) {
             material.envMapIntensity = 0.7;
             if (material.map) material.map.anisotropy = 8;
+            if (material.transparent && /hair|eyebrow|eyelash/i.test(material.name)) {
+              // Alpha-tested strands write depth so hair never shows the scalp through itself or sorts behind the face.
+              material.alphaTest = 0.3;
+              material.depthWrite = true;
+              material.side = THREE.DoubleSide;
+            }
           }
           this.environment?.setupMaterial(material);
         }
@@ -260,6 +271,7 @@ export class Golfer {
 
   update(dtSeconds: number): void {
     this.mixer.update(dtSeconds);
+    this.updateContactBlobs();
     if (!this.pending || this.pending.fired) return;
     this.pending.elapsed += dtSeconds;
     if (this.pending.elapsed >= this.pending.impactAt) {
@@ -268,4 +280,42 @@ export class Golfer {
       this.pending = undefined;
     }
   }
+
+  private updateContactBlobs(): void {
+    this.root.updateWorldMatrix(true, true);
+    for (const side of ['Left', 'Right'] as const) {
+      const blob = this.footBlobs[side];
+      const heel = this.rig.bone(`${side}Foot`);
+      const toe = this.rig.bone(`${side}ToeBase`);
+      if (!heel || !toe) {
+        blob.visible = false;
+        continue;
+      }
+      heel.getWorldPosition(tmpHeel);
+      toe.getWorldPosition(tmpToe);
+      this.group.worldToLocal(tmpHeel);
+      this.group.worldToLocal(tmpToe);
+      tmpToe.sub(tmpHeel);
+      // Centre the ellipse mid-foot, align it with the heel→toe direction, fade as the foot lifts.
+      blob.position.set(tmpHeel.x + tmpToe.x * 0.5, 0.004, tmpHeel.z + tmpToe.z * 0.5);
+      blob.rotation.set(-Math.PI / 2, 0, Math.atan2(tmpToe.x, tmpToe.z));
+      const lift = THREE.MathUtils.clamp(Math.min(tmpHeel.y - 0.08, tmpHeel.y + tmpToe.y - 0.03) / 0.25, 0, 1);
+      blob.material.opacity = 0.55 * (1 - lift);
+      blob.visible = lift < 1;
+    }
+    const head = this.club?.getObjectByName('ClubHead');
+    if (!head) {
+      this.clubBlob.visible = false;
+      return;
+    }
+    head.getWorldPosition(tmpHeel);
+    this.group.worldToLocal(tmpHeel);
+    const lift = THREE.MathUtils.clamp(tmpHeel.y / 0.3, 0, 1);
+    this.clubBlob.position.set(tmpHeel.x, 0.004, tmpHeel.z);
+    this.clubBlob.material.opacity = 0.45 * (1 - lift);
+    this.clubBlob.visible = lift < 1;
+  }
 }
+
+const tmpHeel = new THREE.Vector3();
+const tmpToe = new THREE.Vector3();

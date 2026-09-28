@@ -42,10 +42,10 @@ interface TreeKind {
 
 /** Course `tree.kind` → ez-tree preset (MIT, textured bark + leaf cards). Unknown kinds fall back to pine. */
 const TREE_KINDS: Record<string, TreeKind> = {
-  pine: { preset: 'Pine Medium', height: 15, seeds: [1201, 1202] },
-  oak: { preset: 'Oak Medium', height: 12, seeds: [2101, 2102] },
+  pine: { preset: 'Pine Medium', height: 15, seeds: [1201, 1202, 1203] },
+  oak: { preset: 'Oak Medium', height: 12, seeds: [2101, 2102, 2103] },
   ash: { preset: 'Ash Medium', height: 12.5, seeds: [3101, 3102] },
-  aspen: { preset: 'Aspen Medium', height: 11, seeds: [4101] },
+  aspen: { preset: 'Aspen Medium', height: 11, seeds: [4101, 4102] },
   bush: { preset: 'Bush 1', height: 2.5, seeds: [5101] },
 };
 
@@ -159,7 +159,10 @@ export class Vegetation {
       const position = new THREE.Vector3(tree.position.x, course.sampler.heightAt(tree.position.x, tree.position.z) - 0.05, tree.position.z);
       const scale = tree.scale;
       const matrix = new THREE.Matrix4().compose(position, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), tree.rotation), new THREE.Vector3(scale, scale, scale));
-      const tint = new THREE.Color(0.86 + hash(index * 2.17) * 0.28, 0.9 + hash(index * 3.91) * 0.2, 0.86 + hash(index * 7.13) * 0.2);
+      // Per-tree foliage tone: lush/dark through yellow-green so neighbours of the same variant never match.
+      const warmth = hash(index * 2.17);
+      const brightness = 0.78 + hash(index * 3.91) * 0.34;
+      const tint = new THREE.Color((0.84 + warmth * 0.3) * brightness, (0.9 + warmth * 0.1) * brightness, (0.78 + (1 - warmth) * 0.22) * brightness);
       bucket.members.push({ matrix, position, scale, tint });
     });
 

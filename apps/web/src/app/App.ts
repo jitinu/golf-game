@@ -74,7 +74,10 @@ export class App {
       this.ui.hud.setSwingEnabled(ready);
       if (this.golfer && this.session.course) {
         this.golfer.setClub(CLUBS[state.selectedClub] ?? CLUBS.driver!);
-        if (ready) this.golfer.faceAim(this.session.ballPosition, this.session.aimYaw);
+        if (ready) {
+          this.golfer.faceAim(this.session.ballPosition, this.session.aimYaw);
+          this.placeBall();
+        }
       }
       this.updateAimLine();
     });
@@ -153,9 +156,15 @@ export class App {
     this.courseScene = undefined;
   }
 
+  private placeBall(): void {
+    if (!this.ball) return;
+    this.ball.setTee(this.session.teeHeight());
+    this.ball.place(this.session.shotStart());
+  }
+
   private placeHole(): void {
     if (!this.session.holeController || !this.ball || !this.golfer || !this.courseScene) return;
-    this.ball.place(this.session.ballPosition);
+    this.placeBall();
     this.golfer.placeForBall(this.session.ballPosition, this.session.aimYaw);
     this.golfer.setClub(CLUBS[this.session.selectedClub] ?? CLUBS.driver!);
     this.courseScene.flag.setCup(this.session.holeController.cup());
@@ -175,7 +184,7 @@ export class App {
     const direction = new THREE.Vector3(Math.sin(this.session.aimYaw), 0, -Math.cos(this.session.aimYaw));
     const points: THREE.Vector3[] = [];
     for (let step = 0; step <= 16; step += 1) {
-      const point = new THREE.Vector3(start.x, 0, start.z).addScaledVector(direction, (length * step) / 16);
+      const point = new THREE.Vector3(start.x, 0, start.z).addScaledVector(direction, 0.6 + (length * step) / 16);
       point.y = (this.session.course?.sampler.heightAt(point.x, point.z) ?? start.y) + 0.05;
       points.push(point);
     }
@@ -202,7 +211,7 @@ export class App {
       }, HOLE_COMPLETE_PAUSE_MS);
       return;
     }
-    this.ball.place(this.session.ballPosition);
+    this.placeBall();
     this.golfer.placeForBall(this.session.ballPosition, this.session.aimYaw);
     this.camera.endShot();
     this.camera.mode = 'aim';

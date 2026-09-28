@@ -19,7 +19,6 @@ export function stanceDistance(spec: ClubSpec): number {
 const X = new THREE.Vector3(1, 0, 0);
 const Y = new THREE.Vector3(0, 1, 0);
 const Z = new THREE.Vector3(0, 0, 1);
-const LOCAL_X = new THREE.Vector3(1, 0, 0);
 
 const smooth = (u: number): number => {
   const t = THREE.MathUtils.clamp(u, 0, 1);
@@ -136,7 +135,9 @@ function solveArm(rig: SwingRig, side: Side, wrist: THREE.Vector3, palmNormal: T
   rig.rotate(fore, new THREE.Quaternion().setFromUnitVectors(currentFore, forearmAxis));
   rig.update();
   // Twist the forearm so its palm side already faces the grip, keeping the wrist hinge within reason.
-  const foreZ = new THREE.Vector3(0, 0, 1).applyQuaternion(rig.quaternionOf(fore));
+  const restHand = rig.handFrame(side.name);
+  const foreDelta = rig.quaternionOf(fore).multiply(rig.restWorld(fore).clone().invert());
+  const foreZ = restHand.palm.clone().applyQuaternion(foreDelta);
   foreZ.addScaledVector(forearmAxis, -foreZ.dot(forearmAxis)).normalize();
   const palmInPlane = palmNormal.clone().addScaledVector(forearmAxis, -palmNormal.dot(forearmAxis)).normalize();
   const twist = Math.atan2(foreZ.clone().cross(palmInPlane).dot(forearmAxis), foreZ.dot(palmInPlane));
@@ -146,20 +147,29 @@ function solveArm(rig: SwingRig, side: Side, wrist: THREE.Vector3, palmNormal: T
   const palm = palmNormal.clone().normalize();
   const fingers = forearmAxis.clone().addScaledVector(palm, -forearmAxis.dot(palm)).normalize();
   const across = fingers.clone().cross(palm).normalize();
-  const basis = new THREE.Matrix4().makeBasis(across, fingers, palm);
-  rig.setOrientation(hand, new THREE.Quaternion().setFromRotationMatrix(basis));
+  const target = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(across, fingers, palm));
+  const restBasis = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(restHand.across, restHand.fingers, restHand.palm),
+  );
+  rig.setOrientation(hand, target.multiply(restBasis.invert()).multiply(rig.restWorld(hand)));
   rig.update();
   return { forearmAxis };
 }
 
+/** Curls the fingers toward the palm about the rest knuckle axis, expressed in each phalanx's own frame. */
 function curlFingers(rig: SwingRig, side: Side, amount: number): void {
+  const { across } = rig.handFrame(side.name);
+  const curl = (name: string, angle: number): void => {
+    const bone = rig.bone(name);
+    if (bone) rig.applyLocal(name, rig.localAxis(bone, across), angle);
+  };
   for (const finger of ['Index', 'Middle', 'Ring', 'Pinky']) {
     for (const segment of [1, 2, 3]) {
-      rig.applyLocal(`${side.name}Hand${finger}${segment}`, LOCAL_X, amount * (segment === 1 ? 0.9 : 1));
+      curl(`${side.name}Hand${finger}${segment}`, amount * (segment === 1 ? 0.9 : 1));
     }
   }
   for (const segment of [1, 2, 3]) {
-    rig.applyLocal(`${side.name}HandThumb${segment}`, LOCAL_X, amount * 0.25);
+    curl(`${side.name}HandThumb${segment}`, amount * 0.25);
   }
 }
 
@@ -365,7 +375,7 @@ export function bakeSwing(context: BakeContext, type: SwingType): THREE.Animatio
     placeHands(rig, frame);
     const release = smooth((t - swing.impactTime - 0.06) / 0.3);
     const gaze = ball.clone().add(new THREE.Vector3(30 * release, 6 * release, 5 * release));
-    lookAt(rig, gaze, 1);
+    lookAt(rig, gaze, 0.6);
     clubPivot.position.copy(frame.butt);
     clubPivot.quaternion.copy(frame.quaternion);
     recorder.capture(t * duration);
@@ -416,7 +426,7 @@ export function bakeCelebration(context: BakeContext): THREE.AnimationClip {
       clubPivot.position.copy(addressClub.butt);
       clubPivot.quaternion.copy(addressClub.quaternion);
     }
-    lookAt(rig, new THREE.Vector3(30, 8, 0), 1 - raise * 0.4);
+    lookAt(rig, new THREE.Vector3(30, 8, 0), 0.6 - raise * 0.25);
     recorder.capture(t * duration);
   }
   rig.reset();

@@ -11,6 +11,29 @@ function hash(value: number): number {
   return x - Math.floor(x);
 }
 
+function hash2(x: number, z: number, salt: number): number {
+  return hash(x * 127.1 + z * 311.7 + salt * 74.7);
+}
+
+/** Smooth value noise in [0, 1] over world metres; drives patch-scale density, tone and comb direction. */
+function valueNoise(x: number, z: number, scale: number, salt: number): number {
+  const u = x / scale;
+  const v = z / scale;
+  const x0 = Math.floor(u);
+  const z0 = Math.floor(v);
+  const fx = u - x0;
+  const fz = v - z0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sz = fz * fz * (3 - 2 * fz);
+  const a = hash2(x0, z0, salt);
+  const b = hash2(x0 + 1, z0, salt);
+  const c = hash2(x0, z0 + 1, salt);
+  const d = hash2(x0 + 1, z0 + 1, salt);
+  return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+}
+
+const ATLAS_VARIANTS = 4;
+
 function grassy(surface: SurfaceId): boolean {
   return surface === SurfaceId.Green || surface === SurfaceId.Fairway || surface === SurfaceId.FirstCut || surface === SurfaceId.Rough;
 }
@@ -24,7 +47,7 @@ function surfaceHeight(surface: SurfaceId): number {
     case SurfaceId.FirstCut:
       return 0.15;
     default:
-      return 0.32;
+      return 0.26;
   }
 }
 
@@ -54,31 +77,54 @@ function clusterGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
+/**
+ * Four tufts side by side, each a dozen thin blades with a base→tip lightness gradient and darker edges, so
+ * clusters read as individual blades up close instead of solid triangles.
+ */
 function grassAtlas(): THREE.Texture {
   const size = 256;
+  const width = size * ATLAS_VARIANTS;
   const canvas = document.createElement('canvas');
-  canvas.width = size;
+  canvas.width = width;
   canvas.height = size;
   const context = canvas.getContext('2d');
   if (context) {
-    context.clearRect(0, 0, size, size);
-    for (let blade = 0; blade < 9; blade += 1) {
-      const x = 20 + blade * 27 + hash(blade * 3.3) * 8;
-      const height = size * (0.55 + hash(blade * 1.7) * 0.4);
-      const lean = (hash(blade * 5.1) - 0.5) * 60;
-      const light = 36 + hash(blade * 2.9) * 18;
-      // Hue range matches the turf albedo (yellow-green), so blades read as part of the ground rather than emerald spikes.
-      context.fillStyle = `hsl(${78 + hash(blade) * 18}, 46%, ${light}%)`;
-      context.beginPath();
-      context.moveTo(x - 6, size);
-      context.quadraticCurveTo(x + lean * 0.4, size - height * 0.5, x + lean, size - height);
-      context.quadraticCurveTo(x + lean * 0.4 + 4, size - height * 0.5, x + 6, size);
-      context.closePath();
-      context.fill();
+    context.clearRect(0, 0, width, size);
+    for (let variant = 0; variant < ATLAS_VARIANTS; variant += 1) {
+      const origin = variant * size;
+      const blades = 11 + variant * 2;
+      for (let blade = 0; blade < blades; blade += 1) {
+        const seed = variant * 100 + blade;
+        const x = origin + 24 + ((blade + 0.5) / blades) * (size - 48) + (hash(seed * 3.3) - 0.5) * 14;
+        const height = size * (0.5 + hash(seed * 1.7) * 0.45);
+        const lean = (hash(seed * 5.1) - 0.5) * 90;
+        const halfWidth = 2.5 + hash(seed * 7.7) * 3;
+        const hue = 76 + hash(seed) * 22;
+        const light = 43 + hash(seed * 2.9) * 14;
+        // Base→tip gradient: shaded near the soil, lit at the tip, with the same yellow-green hue as the turf albedo.
+        const gradient = context.createLinearGradient(0, size, 0, size - height);
+        gradient.addColorStop(0, `hsl(${hue}, 42%, ${light - 6}%)`);
+        gradient.addColorStop(0.55, `hsl(${hue}, 46%, ${light}%)`);
+        gradient.addColorStop(1, `hsl(${hue + 4}, 50%, ${light + 12}%)`);
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.moveTo(x - halfWidth, size);
+        context.quadraticCurveTo(x + lean * 0.35 - halfWidth * 0.5, size - height * 0.55, x + lean, size - height);
+        context.quadraticCurveTo(x + lean * 0.35 + halfWidth * 0.5, size - height * 0.55, x + halfWidth, size);
+        context.closePath();
+        context.fill();
+        // Thin dark midrib for silhouette definition.
+        context.strokeStyle = `hsla(${hue}, 40%, ${light - 12}%, 0.3)`;
+        context.lineWidth = 0.7;
+        context.beginPath();
+        context.moveTo(x, size);
+        context.quadraticCurveTo(x + lean * 0.35, size - height * 0.55, x + lean, size - height);
+        context.stroke();
+      }
     }
   }
-  const pixels = context?.getImageData(0, 0, size, size).data ?? new Uint8ClampedArray(size * size * 4);
-  const texture = new THREE.DataTexture(new Uint8Array(pixels.buffer), size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  const pixels = context?.getImageData(0, 0, width, size).data ?? new Uint8ClampedArray(width * size * 4);
+  const texture = new THREE.DataTexture(new Uint8Array(pixels.buffer), width, size, THREE.RGBAFormat, THREE.UnsignedByteType);
   texture.flipY = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.generateMipmaps = true;
@@ -105,6 +151,8 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
       attribute float phase;
       attribute float lean;
       attribute vec3 tint;
+      attribute vec2 comb;
+      attribute float variant;
       varying vec2 vUv;
       varying vec3 vTint;
       varying float vHeight;
@@ -113,7 +161,7 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
       varying vec3 vViewDir;
       uniform float time;
       void main() {
-        vUv = uv;
+        vUv = vec2((uv.x + variant) / ${ATLAS_VARIANTS.toFixed(1)}, uv.y);
         vTint = tint;
         vHeight = position.y;
         vec4 world = modelMatrix * instanceMatrix * vec4(position, 1.0);
@@ -123,8 +171,9 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
         float h2 = position.y * position.y;
         float gust = sin(time * 1.7 + phase + world.x * 0.15 + world.z * 0.11);
         float flutter = sin(time * 4.3 + phase * 2.1) * 0.25;
-        world.x += (lean + (gust + flutter) * 0.12) * h2;
-        world.z += (gust * 0.06 + cos(phase) * lean * 0.5) * h2;
+        // Patch-scale comb direction (mowing / prevailing wind) plus per-cluster lean and animated gusts.
+        world.x += (comb.x + lean + (gust + flutter) * 0.12) * h2;
+        world.z += (comb.y + gust * 0.06 + cos(phase) * lean * 0.5) * h2;
         vec4 view = viewMatrix * world;
         vFogDepth = -view.z;
         gl_Position = projectionMatrix * view;
@@ -144,14 +193,14 @@ function grassMaterial(atlas: THREE.Texture, fog: THREE.FogExp2 | undefined, sun
       void main() {
         vec4 tex = texture2D(map, vUv);
         if (tex.a < 0.4) discard;
-        float ao = mix(0.4, 1.0, vHeight);
+        float ao = mix(0.68, 1.0, vHeight);
         vec3 n = gl_FrontFacing ? vNormal : -vNormal;
-        n = normalize(mix(n, vec3(0.0, 1.0, 0.0), 0.5));
+        n = normalize(mix(n, vec3(0.0, 1.0, 0.0), 0.7));
         float diffuse = max(dot(n, sunDirection), 0.0);
         // Thin blades transmit light: brighten tips when the sun is behind them.
         float translucency = pow(max(dot(-vViewDir, sunDirection), 0.0), 3.0) * vHeight * 0.35;
         vec3 sun = vec3(1.0, 0.95, 0.86) * (diffuse * 0.75 + translucency);
-        vec3 sky = vec3(0.62, 0.72, 0.8) * 0.45;
+        vec3 sky = vec3(0.62, 0.72, 0.8) * 0.55;
         vec3 color = tex.rgb * vTint * (sun + sky) * ao * 1.25;
         // Far blades lose contrast so sparse distant clusters read as ground texture rather than speckle.
         color = mix(color, color * 1.15 + vec3(0.01, 0.02, 0.005), smoothstep(12.0, 55.0, vFogDepth));
@@ -166,6 +215,7 @@ interface Ring {
   mesh: THREE.InstancedMesh;
   radius: number;
   tints: Float32Array;
+  combs: Float32Array;
 }
 
 /** Camera-centred LOD rings of instanced grass clusters; the mask decides where grass grows. */
@@ -197,16 +247,21 @@ export class GrassField {
       mesh.userData.excludeAO = true;
       const phases = new Float32Array(count);
       const leans = new Float32Array(count);
+      const variants = new Float32Array(count);
       const tints = new Float32Array(count * 3);
+      const combs = new Float32Array(count * 2);
       for (let index = 0; index < count; index += 1) {
         phases[index] = hash(index * 8.2 + ring) * Math.PI * 2;
         leans[index] = (hash(index * 6.2 + ring) - 0.5) * 0.3;
+        variants[index] = Math.floor(hash(index * 4.7 + ring * 3) * ATLAS_VARIANTS);
       }
       mesh.geometry.setAttribute('phase', new THREE.InstancedBufferAttribute(phases, 1));
       mesh.geometry.setAttribute('lean', new THREE.InstancedBufferAttribute(leans, 1));
+      mesh.geometry.setAttribute('variant', new THREE.InstancedBufferAttribute(variants, 1));
       mesh.geometry.setAttribute('tint', new THREE.InstancedBufferAttribute(tints, 3));
+      mesh.geometry.setAttribute('comb', new THREE.InstancedBufferAttribute(combs, 2));
       this.materials.push(material);
-      this.rings.push({ mesh, radius, tints });
+      this.rings.push({ mesh, radius, tints, combs });
       this.group.add(mesh);
     });
   }
@@ -223,7 +278,7 @@ export class GrassField {
 
   private scatter(ring: Ring, ringIndex: number): void {
     const inner = ringIndex === 0 ? 0 : (RING_RADII[ringIndex - 1] ?? 0);
-    const { mesh, radius, tints } = ring;
+    const { mesh, radius, tints, combs } = ring;
     const cx = Math.round(this.center.x);
     const cz = Math.round(this.center.z);
     for (let index = 0; index < mesh.count; index += 1) {
@@ -233,22 +288,34 @@ export class GrassField {
       const x = cx + Math.cos(angle) * r;
       const z = cz + Math.sin(angle) * r;
       const surface = this.course.surfaceMask.surfaceAt(x, z);
-      const grow = grassy(surface);
-      const height = grow ? surfaceHeight(surface) * (0.8 + hash(seed + 2) * 0.5) * (ringIndex === 2 ? 0.85 : 1) : 0;
-      const width = 0.25 + hash(seed + 3) * 0.25 + ringIndex * 0.12;
+      // Patch-scale variation: thin/thick density, dry/lush tone and a comb direction that drifts across the course.
+      const density = valueNoise(x, z, 9, 1) * 0.6 + valueNoise(x, z, 2.5, 2) * 0.4;
+      const lush = valueNoise(x, z, 14, 3);
+      const thinCut = surface === SurfaceId.Green || surface === SurfaceId.Fairway;
+      const grow = grassy(surface) && density > (thinCut ? 0.42 : 0.28) - (ringIndex === 0 ? 0.1 : 0);
+      const height = grow
+        ? surfaceHeight(surface) * (0.75 + hash(seed + 2) * 0.5) * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1)
+        : 0;
+      const width = 0.22 + hash(seed + 3) * 0.28 + ringIndex * 0.12;
       this.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash(seed + 4) * Math.PI * 2);
       this.scale.set(width, height, width);
       this.position.set(x, this.course.sampler.heightAt(x, z) - 0.01, z);
       this.matrix.compose(this.position, this.quaternion, this.scale);
       mesh.setMatrixAt(index, this.matrix);
-      const dry = hash(seed + 5);
-      const shade = 0.8 + hash(seed + 6) * 0.3;
-      tints[index * 3] = (0.7 + dry * 0.3) * shade;
-      tints[index * 3 + 1] = (0.92 + dry * 0.08) * shade;
-      tints[index * 3 + 2] = (0.5 + dry * 0.15) * shade;
+      const dry = hash(seed + 5) * 0.5 + (1 - lush) * 0.5;
+      const shade = (0.82 + hash(seed + 6) * 0.26) * (0.9 + lush * 0.2);
+      tints[index * 3] = (0.68 + dry * 0.34) * shade;
+      tints[index * 3 + 1] = (0.9 + dry * 0.1) * shade;
+      tints[index * 3 + 2] = (0.48 + dry * 0.14) * shade;
+      const combAngle = valueNoise(x, z, 22, 4) * Math.PI * 2;
+      const combStrength = 0.08 + valueNoise(x, z, 6, 5) * 0.18;
+      combs[index * 2] = Math.cos(combAngle) * combStrength;
+      combs[index * 2 + 1] = Math.sin(combAngle) * combStrength;
     }
     mesh.instanceMatrix.needsUpdate = true;
-    const tintAttribute = mesh.geometry.getAttribute('tint');
-    if (tintAttribute instanceof THREE.InstancedBufferAttribute) tintAttribute.needsUpdate = true;
+    for (const name of ['tint', 'comb']) {
+      const attribute = mesh.geometry.getAttribute(name);
+      if (attribute instanceof THREE.InstancedBufferAttribute) attribute.needsUpdate = true;
+    }
   }
 }

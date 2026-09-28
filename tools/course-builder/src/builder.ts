@@ -34,6 +34,7 @@ const BUNKER_BLEND = 2.5;
 const WATER_BANK = 0.35;
 const WATER_BED = 1.4;
 const WATER_BLEND = 7;
+const TEE_BOX_RADIUS_M = 7;
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
@@ -258,6 +259,23 @@ function hash2(seed: number, x: number, z: number): number {
   return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
 }
 
+/** Smooth value noise in [0, 1] on a `scale`-metre lattice; used for grove/clearing structure in the tree belts. */
+function groveNoise(seed: number, x: number, z: number, scale: number): number {
+  const u = x / scale;
+  const v = z / scale;
+  const x0 = Math.floor(u);
+  const z0 = Math.floor(v);
+  const fx = u - x0;
+  const fz = v - z0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sz = fz * fz * (3 - 2 * fz);
+  const a = hash2(seed, x0, z0);
+  const b = hash2(seed, x0 + 1, z0);
+  const c = hash2(seed, x0, z0 + 1);
+  const d = hash2(seed, x0 + 1, z0 + 1);
+  return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
+}
+
 function polygonDistance(x: number, z: number, polygon: Polygon): number {
   if (pointInPolygon(x, z, polygon)) return 0;
   let distance = Number.POSITIVE_INFINITY;
@@ -287,9 +305,13 @@ export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
   const rows = Math.floor(source.map.depth / scatter.spacing);
   for (let row = 0; row < rows; row += 1) {
     for (let column = 0; column < columns; column += 1) {
-      if (hash2(scatter.seed, column, row) > scatter.density) continue;
-      const x = (column + 0.5 + (hash2(scatter.seed + 1, column, row) - 0.5)) * scatter.spacing;
-      const z = (row + 0.5 + (hash2(scatter.seed + 2, column, row) - 0.5)) * scatter.spacing;
+      // Jitter well beyond the cell so the grid never shows, and modulate density with two noise octaves so
+      // the belts form dense groves and open clearings instead of an even carpet.
+      const x = (column + 0.5 + (hash2(scatter.seed + 1, column, row) - 0.5) * 1.6) * scatter.spacing;
+      const z = (row + 0.5 + (hash2(scatter.seed + 2, column, row) - 0.5) * 1.6) * scatter.spacing;
+      const grove = groveNoise(scatter.seed + 11, x, z, 70) * 0.65 + groveNoise(scatter.seed + 12, x, z, 24) * 0.35;
+      const localDensity = scatter.density * Math.min(1.5, Math.max(0, grove * 2.2 - 0.25));
+      if (hash2(scatter.seed, column, row) > localDensity) continue;
       if (x < 6 || z < 6 || x > source.map.width - 6 || z > source.map.depth - 6) continue;
       const surface = classifySurface(x, z, source.features);
       if (surface !== SurfaceId.Rough && surface !== SurfaceId.OutOfBounds) continue;
@@ -297,7 +319,9 @@ export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
       if (distance < scatter.minPlayDistance || distance > scatter.maxPlayDistance) continue;
       let pick = hash2(scatter.seed + 3, column, row) * totalWeight;
       const kind = scatter.kinds.find((candidate) => (pick -= candidate.weight) <= 0) ?? scatter.kinds[scatter.kinds.length - 1]!;
-      const scale = kind.scale[0] + (kind.scale[1] - kind.scale[0]) * hash2(scatter.seed + 4, column, row);
+      // Skew toward mid-size with occasional giants so the canopy line breaks up.
+      const t = hash2(scatter.seed + 4, column, row);
+      const scale = kind.scale[0] + (kind.scale[1] - kind.scale[0]) * (t < 0.85 ? t / 0.85 * 0.8 : 0.8 + ((t - 0.85) / 0.15) * 0.2);
       trees.push({ position: { x, y: 0, z }, kind: kind.kind, scale: Math.round(scale * 100) / 100, rotation: Math.round(hash2(scatter.seed + 5, column, row) * Math.PI * 2 * 100) / 100 });
     }
   }
@@ -340,9 +364,15 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
     }
   }
   const surface = new Uint8Array(maskWidth * maskDepth);
+  const tees = source.holes.flatMap((hole) => hole.tees.map((tee) => tee.position));
   for (let iz = 0; iz < maskDepth; iz += 1) {
     for (let ix = 0; ix < maskWidth; ix += 1) {
-      surface[iz * maskWidth + ix] = classifySurface(ix * source.maskCellSize, iz * source.maskCellSize, features);
+      const x = ix * source.maskCellSize;
+      const z = iz * source.maskCellSize;
+      let id = classifySurface(x, z, features);
+      // Tee boxes are mown to fairway height (only ever carved out of rough / first cut).
+      if ((id === SurfaceId.Rough || id === SurfaceId.FirstCut) && tees.some((tee) => Math.hypot(x - tee.x, z - tee.z) <= TEE_BOX_RADIUS_M)) id = SurfaceId.Fairway;
+      surface[iz * maskWidth + ix] = id;
     }
   }
   const manifest: CourseManifest = {

@@ -8,6 +8,9 @@ import type { Golfer, SwingType } from '../animation/Golfer.js';
 
 export type SessionListener = (state: GameState) => void;
 
+/** Tee-peg height by club category for the opening stroke of a hole (metres above the turf). */
+const TEE_HEIGHT_M: Record<string, number> = { driver: 0.04, wood: 0.022, hybrid: 0.014, iron: 0.008, wedge: 0.005, putter: 0 };
+
 export class GameSession {
   readonly state = initialGameState();
   readonly shots: ShotRecord[] = [];
@@ -68,6 +71,18 @@ export class GameSession {
     return this.holeController?.suggestClub(this.state.distanceToPin) ?? 'driver';
   }
 
+  /** Height of the tee peg under the ball, or 0 when the ball is played from the turf. */
+  teeHeight(): number {
+    if (this.state.stroke !== 1) return 0;
+    return TEE_HEIGHT_M[CLUBS[this.selectedClub]?.category ?? 'putter'] ?? 0;
+  }
+
+  /** Where the ball actually sits before the shot: the lie position lifted by any tee peg. */
+  shotStart(): Vec3 {
+    const tee = this.teeHeight();
+    return tee > 0 ? { x: this.ballPosition.x, y: this.ballPosition.y + tee, z: this.ballPosition.z } : this.ballPosition;
+  }
+
   setClub(clubId: string): void {
     if (!CLUBS[clubId]) return;
     this.selectedClub = clubId;
@@ -96,7 +111,7 @@ export class GameSession {
     this.notify();
     if (!skipAnimation) await golfer.playSwing(type);
     const command: ShotCommand = { clubId: this.selectedClub, aimYaw: this.aimYaw, power: this.state.power, accuracy: this.state.accuracy, seed: this.shots.length + 1 };
-    const resolved = this.holeController.resolve(command, this.ballPosition, this.state.stroke);
+    const resolved = this.holeController.resolve(command, this.shotStart(), this.state.stroke);
     this.shots.push(resolved.record);
     this.notify();
     return resolved;

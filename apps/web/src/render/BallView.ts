@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { BallState } from '@golf/sim';
 import type { Environment } from './Environment.js';
+import { createContactBlob } from './ContactShadow.js';
 import { TrajectoryPlayback } from '../game/TrajectoryPlayback.js';
 
 const BALL_RADIUS = 0.02135;
@@ -8,6 +9,23 @@ const BALL_RADIUS = 0.02135;
 const MIN_SCREEN_FRACTION = 0.011;
 const TRAIL_POINTS = 240;
 const TRAIL_SAMPLE_M = 0.6;
+const TEE_PEG_RADIUS = 0.0022;
+const TEE_CUP_RADIUS = 0.0065;
+
+function teePeg(environment?: Environment): THREE.Group {
+  const material = new THREE.MeshStandardMaterial({ color: 0xf4f1e8, roughness: 0.55, metalness: 0 });
+  environment?.setupMaterial(material);
+  const peg = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(TEE_PEG_RADIUS, TEE_PEG_RADIUS * 0.6, 1, 10), material);
+  shaft.name = 'TeeShaft';
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(TEE_CUP_RADIUS, TEE_PEG_RADIUS, 0.008, 12, 1, true), material);
+  cup.name = 'TeeCup';
+  cup.material.side = THREE.DoubleSide;
+  shaft.castShadow = cup.castShadow = true;
+  peg.add(shaft, cup);
+  peg.visible = false;
+  return peg;
+}
 
 function glintTexture(): THREE.Texture {
   const size = 64;
@@ -36,6 +54,9 @@ export class BallView {
   readonly group = new THREE.Group();
   readonly playback = new TrajectoryPlayback();
   private readonly glint: THREE.Sprite;
+  private readonly contact = createContactBlob(BALL_RADIUS * 1.9, BALL_RADIUS * 1.9, 0.6);
+  private readonly tee: THREE.Group;
+  private teeHeight = 0;
   private readonly trail: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly trailPositions = new Float32Array(TRAIL_POINTS * 3);
   private readonly trailColors = new Float32Array(TRAIL_POINTS * 3);
@@ -57,16 +78,38 @@ export class BallView {
     this.trail = new THREE.Line(trailGeometry, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
     this.trail.frustumCulled = false;
     this.trail.userData.excludeAO = true;
-    this.group.add(this.mesh, this.glint, this.trail);
+    this.tee = teePeg(environment);
+    this.group.add(this.mesh, this.glint, this.trail, this.contact, this.tee);
+  }
+
+  /** Shows a tee peg of the given height under the ball (0 hides it); the ball is expected to be placed on top of it. */
+  setTee(height: number): void {
+    this.teeHeight = height;
+    this.tee.visible = height > 0;
+    if (height <= 0) return;
+    const shaft = this.tee.getObjectByName('TeeShaft')!;
+    const cup = this.tee.getObjectByName('TeeCup')!;
+    // The shaft is buried ~2 cm so the peg reads as pushed into the turf; the cup cradles the ball just below its centre.
+    const buried = 0.02;
+    const visible = Math.max(0.004, height - 0.006);
+    shaft.scale.set(1, visible + buried, 1);
+    shaft.position.y = (visible - buried) / 2;
+    cup.position.y = visible + 0.004;
   }
 
   place(position: { x: number; y: number; z: number }): void {
     this.mesh.position.set(position.x, position.y, position.z);
     this.glint.position.copy(this.mesh.position);
+    const onTee = this.tee.visible;
+    this.contact.position.set(position.x, position.y - BALL_RADIUS - (onTee ? this.teeHeight : 0) + 0.003, position.z);
+    this.tee.position.set(position.x, position.y - BALL_RADIUS - this.teeHeight, position.z);
+    const mode = this.playback.state?.mode;
+    this.contact.visible = this.playback.done || mode === 'roll' || mode === 'rest' || mode === 'holed' || mode === undefined;
   }
 
   start(trajectory: BallState[]): void {
     this.playback.start(trajectory);
+    this.tee.visible = false;
     this.trailCount = 0;
     this.trail.geometry.setDrawRange(0, 0);
     this.lastTrailPoint.set(Number.NaN, 0, 0);

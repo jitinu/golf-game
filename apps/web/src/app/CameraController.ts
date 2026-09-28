@@ -109,8 +109,10 @@ export class CameraController {
     const pinVector = new THREE.Vector3(pin.x, pin.y, pin.z);
     if (this.mode === 'aim') {
       const right = new THREE.Vector3(-aim.z, 0, aim.x);
-      this.desired.copy(ballVector).addScaledVector(aim, -5.5).addScaledVector(right, 2.2).add(new THREE.Vector3(0, 1.8, 0));
-      this.target.copy(ballVector).addScaledVector(aim, 20).addScaledVector(right, 1.8).add(new THREE.Vector3(0, -0.2, 0));
+      // Low broadcast angle: just above hip height, off the golfer's trail shoulder, looking down the line so the
+      // fairway, hazards and tree line give the frame depth while the golfer stays the foreground focal point.
+      this.desired.copy(ballVector).addScaledVector(aim, -4.9).addScaledVector(right, 2.8).add(new THREE.Vector3(0, 1.4, 0));
+      this.target.copy(ballVector).addScaledVector(aim, 26).addScaledVector(right, 1.6).add(new THREE.Vector3(0, 0.4, 0));
       return false;
     }
     if (this.mode === 'green') {
