@@ -111,7 +111,7 @@ input {
 .swing-button {
   position: absolute;
   left: 50%;
-  bottom: 120px;
+  bottom: 168px;
   transform: translateX(-50%);
   width: 160px;
   height: 64px;
