@@ -44,6 +44,15 @@ importers:
 
   apps/web:
     dependencies:
+      '@dgreenheck/ez-tree':
+        specifier: 1.1.0
+        version: 1.1.0(three@0.170.0)
+      '@fontsource-variable/inter':
+        specifier: 5.2.8
+        version: 5.2.8
+      '@fontsource/barlow-condensed':
+        specifier: 5.2.8
+        version: 5.2.8
       '@golf/course-format':
         specifier: workspace:*
         version: link:../../packages/course-format
@@ -103,6 +112,11 @@ importers:
         version: link:../../packages/sim
 
 packages:
+
+  '@dgreenheck/ez-tree@1.1.0':
+    resolution: {integrity: sha512-6pvS6hD6B6h00dm0SnkgYeT4ABU5Y1Z9M44p1tXiV5C0eKrQy2sKECXshoaUv0qAOqYVL68w/PwadUxDFDiHUg==}
+    peerDependencies:
+      three: '>=0.167'
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -591,6 +605,12 @@ packages:
   '@eslint/plugin-kit@0.4.1':
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+
+  '@fontsource-variable/inter@5.2.8':
+    resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
+
+  '@fontsource/barlow-condensed@5.2.8':
+    resolution: {integrity: sha512-cmCWNfh7oCmfarGDlhiJRkl4HOgt9aOqki7IYtDOaI3qLCeEO/8VjiZeAx/2PEPf4K36YxXDjAlOWwW/anQUZA==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -1445,6 +1465,10 @@ packages:
 
 snapshots:
 
+  '@dgreenheck/ez-tree@1.1.0(three@0.170.0)':
+    dependencies:
+      three: 0.170.0
+
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
 
@@ -1715,6 +1739,10 @@ snapshots:
     dependencies:
       '@eslint/core': 0.17.0
       levn: 0.4.1
+
+  '@fontsource-variable/inter@5.2.8': {}
+
+  '@fontsource/barlow-condensed@5.2.8': {}
 
   '@humanfs/core@0.19.2':
     dependencies:

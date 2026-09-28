@@ -1,6 +1,7 @@
 import type { GameSession } from '../game/GameSession.js';
 import { CourseSelect } from './CourseSelect.js';
 import { Hud } from './Hud.js';
+import { WindWidget } from './WindWidget.js';
 import { ClubSelector } from './ClubSelector.js';
 import { Meters } from './Meters.js';
 import { Scorecard } from './Scorecard.js';
@@ -14,6 +15,7 @@ import './styles.css';
 export class UI {
   readonly root = document.createElement('div');
   readonly hud: Hud;
+  readonly wind: WindWidget;
   readonly meters: Meters;
   readonly clubs: ClubSelector;
   readonly toast: Toast;
@@ -33,6 +35,7 @@ export class UI {
     this.root.className = 'ui';
     document.body.append(this.root);
     this.hud = new Hud(this.root);
+    this.wind = new WindWidget(this.root);
     this.meters = new Meters(this.root);
     this.clubs = new ClubSelector(this.root, (id) => session.setClub(id));
     this.toast = new Toast(this.root);
@@ -57,7 +60,7 @@ export class UI {
     settingsButton.textContent = 'Settings';
     settingsButton.onclick = () => this.settings.show();
     this.root.append(settingsButton);
-    this.gameplay = [this.hud.root, this.hud.swingButton, this.meters.root, this.clubs.root];
+    this.gameplay = [this.hud.root, this.hud.swingButton, this.wind.root, this.meters.root, this.clubs.root];
     this.showCourseSelect();
     session.onChange((state) => {
       const inRound = state.phase !== 'courseSelect';
@@ -65,6 +68,7 @@ export class UI {
         element.style.display = inRound ? '' : 'none';
       });
       this.hud.update(state, session.course?.manifest.name ?? 'Course');
+      this.wind.update(state);
       this.meters.update(state.power, state.accuracy);
       this.clubs.select(state.selectedClub);
       this.clubs.setEnabled(state.phase === 'aiming');

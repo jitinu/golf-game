@@ -4,9 +4,11 @@ import type { Environment } from '../render/Environment.js';
 import { createTerrainMaterial } from './TerrainMaterial.js';
 
 export function createMaskTexture(course: LoadedCourse): THREE.DataTexture {
-  const texture = new THREE.DataTexture(new Uint8Array(course.surfaceMask.data).buffer, course.surfaceMask.width, course.surfaceMask.depth, THREE.RedFormat, THREE.UnsignedByteType);
+  const texture = new THREE.DataTexture(new Uint8Array(course.surfaceMask.data), course.surfaceMask.width, course.surfaceMask.depth, THREE.RedFormat, THREE.UnsignedByteType);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
+  // Single-byte rows of arbitrary width need 1-byte row alignment.
+  texture.unpackAlignment = 1;
   texture.needsUpdate = true;
   return texture;
 }

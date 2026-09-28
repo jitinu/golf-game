@@ -1,6 +1,14 @@
 import { CLUBS } from '@golf/sim';
 
 const CATEGORIES = ['driver', 'wood', 'hybrid', 'iron', 'wedge', 'putter'] as const;
+const CATEGORY_LABELS: Record<(typeof CATEGORIES)[number], string> = {
+  driver: 'Driver',
+  wood: 'Woods',
+  hybrid: 'Hybrids',
+  iron: 'Irons',
+  wedge: 'Wedges',
+  putter: 'Putter',
+};
 
 export class ClubSelector {
   readonly root: HTMLDivElement;
@@ -17,12 +25,15 @@ export class ClubSelector {
       if (!clubs.length) return;
       const section = document.createElement('div');
       section.className = 'club-group';
+      const categoryLabel = document.createElement('div');
+      categoryLabel.className = 'club-category';
+      categoryLabel.textContent = CATEGORY_LABELS[category];
       const grid = document.createElement('div');
       grid.className = 'club-grid';
       clubs.forEach((club) => {
         const button = document.createElement('button');
         button.className = 'button club';
-        button.innerHTML = `<span>${club.displayName}</span><small>${club.maxCarryHintM} m</small>`;
+        button.innerHTML = `<span class="club-name">${club.displayName}</span><span class="club-carry">${club.maxCarryHintM}<small> m</small></span>`;
         button.title = `${club.displayName} · loft ${club.loftDeg}°`;
         button.onclick = () => {
           onSelect(club.id);
@@ -31,7 +42,7 @@ export class ClubSelector {
         this.buttons.set(club.id, button);
         grid.append(button);
       });
-      section.append(grid);
+      section.append(categoryLabel, grid);
       this.root.append(section);
     });
     parent.append(this.root);

@@ -2,9 +2,4 @@ node_modules/
 dist/
 .DS_Store
 *.log
-apps/web/public/hdri/*
-!apps/web/public/hdri/README.md
-apps/web/public/textures/*
-!apps/web/public/textures/README.md
-apps/web/public/models/*
-!apps/web/public/models/README.md
+tools/character/out/

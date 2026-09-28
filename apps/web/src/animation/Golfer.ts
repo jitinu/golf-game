@@ -3,22 +3,16 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import type { ClubDef } from '@golf/sim';
-import { createClubModel } from './ClubModels.js';
+import type { Environment } from '../render/Environment.js';
+import { createContactBlob } from '../render/ContactShadow.js';
+import { CLUB_MATERIALS, clubSpec, createClubModel, specForCategory } from './ClubModels.js';
+import { bakeCelebration, bakeSwing, IMPACT_TIME, stanceDistance, type ClipName, type SwingType } from './SwingBaker.js';
+import { SwingRig } from './SwingRig.js';
 
-export type SwingType = 'swing_full' | 'swing_chip' | 'putt';
+export { IMPACT_TIME, type SwingType } from './SwingBaker.js';
 
-/** Normalised time within each clip at which the club face meets the ball. Physics launches here, never from the animation. */
-export const IMPACT_TIME: Record<SwingType, number> = { swing_full: 0.62, swing_chip: 0.6, putt: 0.55 };
-const CLIP_DURATION: Record<SwingType | 'celebrate', number> = { swing_full: 1.4, swing_chip: 1.1, putt: 1.0, celebrate: 1.4 };
 const GOLFER_MODEL = '/models/golfer.glb';
 const BALL_RADIUS = 0.02135;
-/** Golfer stands this far to the side of the ball (right-handed address, ball off the left heel). */
-const STANCE_OFFSET = 0.75;
-
-interface Rig {
-  group: THREE.Group;
-  socket: THREE.Object3D;
-}
 
 function limb(material: THREE.Material, radius: number, length: number): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 10), material);
@@ -27,8 +21,52 @@ function limb(material: THREE.Material, radius: number, length: number): THREE.M
   return mesh;
 }
 
+/**
+ * Authored GLB materials arrive as plain metal/rough; skin, knit and leather get physically distinct responses so
+ * the character stops reading as one plastic surface: skin has a soft peach-fuzz sheen and lower roughness on the
+ * highlights, fabric a matte sheen that catches rim light, shoes a thin clearcoat over grained leather.
+ */
+function characterMaterial(source: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial {
+  const name = source.name;
+  let physical: THREE.MeshPhysicalMaterial | undefined;
+  if (/body|glove/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.roughness = /glove/i.test(name) ? 0.62 : 0.5;
+    physical.sheen = /glove/i.test(name) ? 0.25 : 0.55;
+    physical.sheenRoughness = 0.7;
+    physical.sheenColor.set(/glove/i.test(name) ? 0xf4efe6 : 0xffd1b8);
+    physical.specularIntensity = 0.6;
+  } else if (/polo|pants|cap|belt/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.sheen = 0.65;
+    physical.sheenRoughness = 0.85;
+    physical.sheenColor.set(0xffffff);
+    physical.specularIntensity = 0.45;
+    if (physical.normalMap) physical.normalScale.setScalar(/pants/i.test(name) ? 1.3 : 1.0);
+  } else if (/shoes/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.roughness = 0.45;
+    physical.clearcoat = 0.35;
+    physical.clearcoatRoughness = 0.35;
+  } else if (/hair/i.test(name)) {
+    physical = new THREE.MeshPhysicalMaterial();
+    THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
+    physical.roughness = 0.45;
+    physical.sheen = 0.6;
+    physical.sheenRoughness = 0.4;
+    physical.sheenColor.set(0x8a6a48);
+  }
+  if (!physical) return source;
+  physical.name = name;
+  source.dispose();
+  return physical;
+}
+
 /** Simple jointed mannequin using Mixamo-style bone names so a real GLB rig can replace it 1:1. */
-function proceduralGolfer(): Rig {
+function proceduralGolfer(): THREE.Group {
   const group = new THREE.Group();
   const skin = new THREE.MeshPhysicalMaterial({ color: 0xc98f68, roughness: 0.65, sheen: 0.4, sheenColor: new THREE.Color(0xffd5c0) });
   const shirt = new THREE.MeshStandardMaterial({ color: 0x2a6f9e, roughness: 0.92 });
@@ -58,17 +96,20 @@ function proceduralGolfer(): Rig {
   neck.name = 'mixamorigNeck';
   neck.position.y = 0.6;
   spine.add(neck);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), skin);
+  const head = new THREE.Object3D();
   head.name = 'mixamorigHead';
-  head.position.y = 0.13;
-  head.castShadow = true;
+  head.position.y = 0.05;
   neck.add(head);
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.115, 18, 14), skin);
+  skull.position.y = 0.08;
+  skull.castShadow = true;
+  head.add(skull);
   const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.125, 0.125, 0.05, 18), cap);
   brim.position.y = 0.09;
-  head.add(brim);
+  skull.add(brim);
 
   for (const side of [-1, 1] as const) {
-    const suffix = side < 0 ? 'Left' : 'Right';
+    const suffix = side < 0 ? 'Right' : 'Left';
     const shoulder = new THREE.Object3D();
     shoulder.name = `mixamorig${suffix}Arm`;
     shoulder.position.set(side * 0.21, 0.52, 0);
@@ -94,186 +135,166 @@ function proceduralGolfer(): Rig {
     leg.position.y = -0.46;
     upLeg.add(leg);
     leg.add(limb(trousers, 0.06, 0.4));
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.26), shoes);
-    foot.position.set(0, -0.47, 0.06);
-    foot.castShadow = true;
+    const foot = new THREE.Object3D();
+    foot.name = `mixamorig${suffix}Foot`;
+    foot.position.y = -0.46;
     leg.add(foot);
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.26), shoes);
+    shoe.position.set(0, -0.01, 0.06);
+    shoe.castShadow = true;
+    foot.add(shoe);
   }
-
-  const rightHand = group.getObjectByName('mixamorigRightHand');
-  const socket = new THREE.Object3D();
-  socket.name = 'ClubSocket';
-  socket.rotation.x = -0.35;
-  rightHand?.add(socket);
-
-  // Address posture: knees flexed, spine tilted toward the ball, arms hanging to the grip.
-  spine.rotation.x = 0.45;
-  for (const suffix of ['Left', 'Right']) {
-    const arm = group.getObjectByName(`mixamorig${suffix}Arm`);
-    const forearm = group.getObjectByName(`mixamorig${suffix}ForeArm`);
-    const upLeg = group.getObjectByName(`mixamorig${suffix}UpLeg`);
-    const leg = group.getObjectByName(`mixamorig${suffix}Leg`);
-    if (arm) arm.rotation.set(0.55, 0, suffix === 'Left' ? 0.28 : -0.28);
-    if (forearm) forearm.rotation.x = -0.15;
-    if (upLeg) upLeg.rotation.x = -0.18;
-    if (leg) leg.rotation.x = 0.35;
-  }
-  return { group, socket };
+  return group;
 }
 
-function quaternionTrack(name: string, times: number[], eulers: Array<[number, number, number]>): THREE.QuaternionKeyframeTrack {
-  const values: number[] = [];
-  const quaternion = new THREE.Quaternion();
-  const euler = new THREE.Euler();
-  eulers.forEach(([x, y, z]) => {
-    quaternion.setFromEuler(euler.set(x, y, z));
-    values.push(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
-  });
-  return new THREE.QuaternionKeyframeTrack(`${name}.quaternion`, times, values);
+interface Placement {
+  ball: THREE.Vector3;
+  yaw: number;
 }
 
-/** Procedural swing: backswing → top → downswing → impact → follow-through; scaled by amplitude for chips and putts. */
-function swingClip(name: SwingType, amplitude: number): THREE.AnimationClip {
-  const duration = CLIP_DURATION[name];
-  const impact = IMPACT_TIME[name] * duration;
-  const top = impact * 0.62;
-  const times = [0, top, impact, Math.min(duration, impact + 0.25), duration];
-  const a = amplitude;
-  return new THREE.AnimationClip(name, duration, [
-    quaternionTrack('mixamorigHips', times, [
-      [0, 0, 0],
-      [0, 0.45 * a, 0],
-      [0, -0.2 * a, 0],
-      [0, -0.9 * a, 0],
-      [0, -1.1 * a, 0],
-    ]),
-    quaternionTrack('mixamorigSpine', times, [
-      [0.45, 0, 0],
-      [0.45, 1.3 * a, 0.05 * a],
-      [0.45, -0.1 * a, 0],
-      [0.4, -1.5 * a, -0.1 * a],
-      [0.3, -1.9 * a, -0.15 * a],
-    ]),
-    quaternionTrack('mixamorigRightArm', times, [
-      [0.55, 0, -0.28],
-      [-1.6 * a + 0.55 * (1 - a), 0.4 * a, -1.1 * a - 0.28 * (1 - a)],
-      [0.65, 0, -0.25],
-      [1.4 * a + 0.55 * (1 - a), -0.3 * a, 0.8 * a - 0.28 * (1 - a)],
-      [1.9 * a + 0.55 * (1 - a), -0.4 * a, 1.2 * a - 0.28 * (1 - a)],
-    ]),
-    quaternionTrack('mixamorigLeftArm', times, [
-      [0.55, 0, 0.28],
-      [-1.4 * a + 0.55 * (1 - a), -0.2 * a, -0.6 * a + 0.28 * (1 - a)],
-      [0.65, 0, 0.25],
-      [1.5 * a + 0.55 * (1 - a), 0.4 * a, 1.3 * a + 0.28 * (1 - a)],
-      [2 * a + 0.55 * (1 - a), 0.5 * a, 1.6 * a + 0.28 * (1 - a)],
-    ]),
-    quaternionTrack('mixamorigRightForeArm', times, [
-      [-0.15, 0, 0],
-      [-1.6 * a - 0.15 * (1 - a), 0, 0],
-      [-0.1, 0, 0],
-      [-0.3, 0, 0],
-      [-1.2 * a - 0.15 * (1 - a), 0, 0],
-    ]),
-    quaternionTrack('mixamorigNeck', times, [
-      [0, 0, 0],
-      [0, -0.35 * a, 0],
-      [0, 0, 0],
-      [0, 0.4 * a, 0],
-      [-0.4 * a, 1 * a, 0],
-    ]),
-  ]);
-}
-
-function celebrateClip(): THREE.AnimationClip {
-  const duration = CLIP_DURATION.celebrate;
-  const times = [0, duration * 0.3, duration * 0.6, duration];
-  return new THREE.AnimationClip('celebrate', duration, [
-    quaternionTrack('mixamorigRightArm', times, [
-      [0.55, 0, -0.28],
-      [-2.8, 0, -0.5],
-      [-2.9, 0, -0.3],
-      [0.55, 0, -0.28],
-    ]),
-    quaternionTrack('mixamorigLeftArm', times, [
-      [0.55, 0, 0.28],
-      [-2.8, 0, 0.5],
-      [-2.9, 0, 0.3],
-      [0.55, 0, 0.28],
-    ]),
-    quaternionTrack('mixamorigSpine', times, [
-      [0.45, 0, 0],
-      [-0.1, 0, 0],
-      [-0.15, 0, 0],
-      [0.45, 0, 0],
-    ]),
-  ]);
-}
-
+/**
+ * Golfer character: a humanoid rig (procedural mannequin until the authored GLB loads) whose swings are baked per
+ * club from a kinematic model — body turn, IK'd arms on the grip, club head through the ball at impact.
+ */
 export class Golfer {
   readonly group = new THREE.Group();
-  private rig: Rig;
+  onSwingStart?: (type: SwingType, impactInSeconds: number) => void;
+  private root: THREE.Object3D;
+  private rig: SwingRig;
   private mixer: THREE.AnimationMixer;
+  private readonly clubPivot = new THREE.Object3D();
   private club: THREE.Group | undefined;
   private clubDef: ClubDef | undefined;
+  private placement: Placement | undefined;
   private pending: { resolve: () => void; impactAt: number; elapsed: number; fired: boolean } | undefined;
   private readonly clips = new Map<string, THREE.AnimationClip>();
+  private readonly authored = new Map<string, THREE.AnimationClip>();
+  /** Ground-contact darkening under each shoe and the club head, in `group` space (origin at ground level). */
+  private readonly footBlobs = { Left: createContactBlob(0.13, 0.2, 0.55), Right: createContactBlob(0.13, 0.2, 0.55) };
+  private readonly clubBlob = createContactBlob(0.09, 0.08, 0.45);
 
-  constructor(renderer?: THREE.WebGLRenderer) {
-    this.rig = proceduralGolfer();
-    this.group.add(this.rig.group);
-    this.mixer = new THREE.AnimationMixer(this.rig.group);
-    this.clips.set('swing_full', swingClip('swing_full', 1));
-    this.clips.set('swing_chip', swingClip('swing_chip', 0.45));
-    this.clips.set('putt', swingClip('putt', 0.15));
-    this.clips.set('celebrate', celebrateClip());
+  constructor(renderer?: THREE.WebGLRenderer, private readonly environment?: Environment) {
+    this.clubPivot.name = 'ClubPivot';
+    this.group.add(this.footBlobs.Left, this.footBlobs.Right, this.clubBlob);
+    this.root = proceduralGolfer();
+    this.root.add(this.clubPivot);
+    this.group.add(this.root);
+    this.rig = new SwingRig(this.root);
+    this.mixer = new THREE.AnimationMixer(this.root);
     this.group.traverse((object) => {
       if (object instanceof THREE.Mesh) object.castShadow = true;
     });
+    CLUB_MATERIALS.forEach((material) => this.environment?.setupMaterial(material));
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
     if (renderer) loader.setKTX2Loader(new KTX2Loader().setTranscoderPath('/basis/').detectSupport(renderer));
     void loader
       .loadAsync(GOLFER_MODEL)
       .then((asset) => this.adoptModel(asset.scene, asset.animations))
-      .catch(() => undefined);
+      .catch((error: unknown) => console.warn('golfer model unavailable, using mannequin', error));
   }
 
-  /** Replace the mannequin with an authored GLB whose skeleton exposes a `ClubSocket` node and Mixamo clip names. */
+  /** Replaces the mannequin with an authored GLB on a Mixamo-named skeleton; authored clips win by name. */
   private adoptModel(scene: THREE.Group, animations: THREE.AnimationClip[]): void {
-    const socket = scene.getObjectByName('ClubSocket') ?? scene.getObjectByName('mixamorigRightHand');
-    if (!socket) return;
     this.mixer.stopAllAction();
-    this.group.remove(this.rig.group);
+    this.group.remove(this.root);
     scene.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.castShadow = true;
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+        object.frustumCulled = false;
+        const materials = (Array.isArray(object.material) ? object.material : [object.material]).map((material) =>
+          material instanceof THREE.MeshStandardMaterial ? characterMaterial(material) : material,
+        );
+        object.material = Array.isArray(object.material) ? materials : materials[0]!;
+        for (const material of materials) {
+          if (material instanceof THREE.MeshStandardMaterial) {
+            // Image-based fill is scaled up on the character so the shaded side of the face, arms and the dark polo
+            // stay readable against the sunlit turf without lifting the whole scene's ambient.
+            material.envMapIntensity = 2.3;
+            if (!/buckle/i.test(material.name)) material.metalness = 0;
+            if (/clothes|polo|pants|belt/i.test(material.name)) material.side = THREE.DoubleSide;
+            if (material.map) material.map.anisotropy = 8;
+            if (material.transparent && /hair|eyebrow|eyelash/i.test(material.name)) {
+              // Alpha-tested strands write depth so hair never shows the scalp through itself or sorts behind the face.
+              material.alphaTest = 0.3;
+              material.depthWrite = true;
+              material.side = THREE.DoubleSide;
+            }
+          }
+          this.environment?.setupMaterial(material);
+        }
+      }
     });
-    this.rig = { group: scene, socket };
+    animations.forEach((clip) => this.authored.set(clip.name, clip));
+    this.root = scene;
+    this.root.add(this.clubPivot);
     this.group.add(scene);
+    this.rig = new SwingRig(scene);
     this.mixer = new THREE.AnimationMixer(scene);
-    animations.forEach((clip) => this.clips.set(clip.name, clip));
-    if (this.clubDef) this.setClub(this.clubDef);
+    this.clips.clear();
+    if (this.clubDef) this.rebake(this.clubDef);
+    if (this.placement) this.faceAim(this.placement.ball, this.placement.yaw);
+    this.returnToAddress();
   }
 
   setClub(club: ClubDef): void {
     if (this.clubDef?.id === club.id && this.club) return;
-    if (this.club) this.rig.socket.remove(this.club);
+    const categoryChanged = this.clubDef?.category !== club.category;
+    if (this.club) this.clubPivot.remove(this.club);
     this.clubDef = club;
     this.club = createClubModel(club);
-    this.rig.socket.add(this.club);
+    this.clubPivot.add(this.club);
+    if (categoryChanged) {
+      this.rebake(club);
+      if (this.placement) this.faceAim(this.placement.ball, this.placement.yaw);
+      this.returnToAddress();
+    }
   }
 
+  private rebake(club: ClubDef): void {
+    const spec = clubSpec(club);
+    const ball = new THREE.Vector3(spec.ballForward, BALL_RADIUS, stanceDistance(spec));
+    const context = { rig: this.rig, clubPivot: this.clubPivot, spec, ball };
+    for (const clip of this.clips.values()) this.mixer.uncacheClip(clip);
+    this.clips.clear();
+    const names: ClipName[] = ['swing_full', 'swing_chip', 'putt', 'celebrate'];
+    for (const name of names) {
+      const authored = this.authored.get(name);
+      if (authored) {
+        this.clips.set(name, authored);
+      } else {
+        this.clips.set(name, name === 'celebrate' ? bakeCelebration(context) : bakeSwing(context, name));
+      }
+    }
+  }
+
+  /** Moves to the next lie and resets the pose to address. */
   placeForBall(position: { x: number; y: number; z: number }, yaw: number): void {
     this.faceAim(position, yaw);
+    this.returnToAddress();
   }
 
-  /** Right-handed address: golfer stands perpendicular to the target line, ball in front of the left foot. */
+  private returnToAddress(): void {
+    const clip = this.clips.get('swing_full');
+    if (!clip) return;
+    const address = this.mixer.clipAction(clip);
+    this.mixer.stopAllAction();
+    address.reset().play().paused = true;
+    this.mixer.update(0);
+  }
+
+  /** Right-handed address: golfer stands perpendicular to the target line, ball off the lead heel. */
   faceAim(ball: { x: number; y: number; z: number }, yaw: number): void {
-    const forwardX = Math.sin(yaw);
-    const forwardZ = -Math.cos(yaw);
-    const rightX = -forwardZ;
-    const rightZ = forwardX;
-    this.group.position.set(ball.x - rightX * STANCE_OFFSET, ball.y - BALL_RADIUS, ball.z - rightZ * STANCE_OFFSET);
-    this.group.rotation.y = yaw + Math.PI / 2;
+    this.placement = { ball: new THREE.Vector3(ball.x, ball.y, ball.z), yaw };
+    const spec = this.clubDef ? clubSpec(this.clubDef) : specForCategory('driver');
+    const stance = stanceDistance(spec);
+    const forward = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(-forward.z, 0, forward.x);
+    this.group.position
+      .set(ball.x, ball.y - BALL_RADIUS, ball.z)
+      .addScaledVector(right, -stance)
+      .addScaledVector(forward, -spec.ballForward);
+    this.group.rotation.y = Math.PI / 2 - yaw;
   }
 
   /** Resolves at the clip's impact time so the ball launches on the exact frame the club reaches it. */
@@ -285,6 +306,7 @@ export class Golfer {
     action.reset().setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
     action.play();
+    this.onSwingStart?.(type, clip.duration * IMPACT_TIME[type]);
     return new Promise((resolve) => {
       this.pending = { resolve, impactAt: clip.duration * IMPACT_TIME[type], elapsed: 0, fired: false };
     });
@@ -295,11 +317,14 @@ export class Golfer {
     if (!clip) return;
     this.mixer.stopAllAction();
     const action = this.mixer.clipAction(clip);
-    action.reset().setLoop(THREE.LoopOnce, 1).play();
+    action.reset().setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.play();
   }
 
   update(dtSeconds: number): void {
     this.mixer.update(dtSeconds);
+    this.updateContactBlobs();
     if (!this.pending || this.pending.fired) return;
     this.pending.elapsed += dtSeconds;
     if (this.pending.elapsed >= this.pending.impactAt) {
@@ -308,4 +333,42 @@ export class Golfer {
       this.pending = undefined;
     }
   }
+
+  private updateContactBlobs(): void {
+    this.root.updateWorldMatrix(true, true);
+    for (const side of ['Left', 'Right'] as const) {
+      const blob = this.footBlobs[side];
+      const heel = this.rig.bone(`${side}Foot`);
+      const toe = this.rig.bone(`${side}ToeBase`);
+      if (!heel || !toe) {
+        blob.visible = false;
+        continue;
+      }
+      heel.getWorldPosition(tmpHeel);
+      toe.getWorldPosition(tmpToe);
+      this.group.worldToLocal(tmpHeel);
+      this.group.worldToLocal(tmpToe);
+      tmpToe.sub(tmpHeel);
+      // Centre the ellipse mid-foot, align it with the heel→toe direction, fade as the foot lifts.
+      blob.position.set(tmpHeel.x + tmpToe.x * 0.5, 0.004, tmpHeel.z + tmpToe.z * 0.5);
+      blob.rotation.set(-Math.PI / 2, 0, Math.atan2(tmpToe.x, tmpToe.z));
+      const lift = THREE.MathUtils.clamp(Math.min(tmpHeel.y - 0.08, tmpHeel.y + tmpToe.y - 0.03) / 0.25, 0, 1);
+      blob.material.opacity = 0.55 * (1 - lift);
+      blob.visible = lift < 1;
+    }
+    const head = this.club?.getObjectByName('ClubHead');
+    if (!head) {
+      this.clubBlob.visible = false;
+      return;
+    }
+    head.getWorldPosition(tmpHeel);
+    this.group.worldToLocal(tmpHeel);
+    const lift = THREE.MathUtils.clamp(tmpHeel.y / 0.3, 0, 1);
+    this.clubBlob.position.set(tmpHeel.x, 0.004, tmpHeel.z);
+    this.clubBlob.material.opacity = 0.45 * (1 - lift);
+    this.clubBlob.visible = lift < 1;
+  }
 }
+
+const tmpHeel = new THREE.Vector3();
+const tmpToe = new THREE.Vector3();

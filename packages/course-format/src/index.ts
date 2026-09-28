@@ -46,7 +46,7 @@ export interface CourseFeatures {
   water: Polygon[];
   outOfBounds: Polygon[];
   paths?: Spline[];
-  trees: { position: Vec3; kind: string; scale: number; rotation: number }[];
+  trees: { position: Vec3; kind: string; scale: number; rotation: number; stretch?: number }[];
 }
 
 export interface Spline {
@@ -60,6 +60,8 @@ export interface Spline {
 export interface Polygon {
   points: { x: number; z: number }[];
   surface: SurfaceId;
+  /** Water polygons only: absolute height of the water surface. */
+  waterLevel?: number;
 }
 
 export class Heightfield {

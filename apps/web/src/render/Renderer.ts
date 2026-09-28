@@ -41,6 +41,9 @@ export class Renderer {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.gtao = new SceneGTAOPass(this.scene, this.camera);
     this.gtao.enabled = preset.gtao;
+    // Wider, stronger occlusion so feet, club, ball and terrain folds read as grounded instead of floating.
+    this.gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.2, thickness: 1.2, scale: 1.5, samples: 16, distanceFallOff: 1 });
+    this.gtao.blendIntensity = 1;
     this.composer.addPass(this.gtao);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.1, 0.4, 0.9);
     this.bloom.enabled = preset.bloom;

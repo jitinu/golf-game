@@ -1,136 +1,484 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
-import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { Tree, TreePreset } from '@dgreenheck/ez-tree';
 import type { LoadedCourse } from '@golf/course-format';
 import type { Environment } from '../render/Environment.js';
+import type { GraphicsPreset } from '../app/GraphicsPreset.js';
 
-const DETAIL_DISTANCE = 0;
-const LOW_POLY_DISTANCE = 30;
-const BILLBOARD_DISTANCE = 100;
+/** Beyond this distance a tree is drawn as a pre-rendered impostor card instead of geometry. */
+const BILLBOARD_DISTANCE: Record<GraphicsPreset['treeDetail'], number> = { low: 70, medium: 110, high: 150 };
+/** Inside this distance a tree uses full geometry; between here and the billboard distance a reduced mesh. */
+const NEAR_DISTANCE: Record<GraphicsPreset['treeDetail'], number> = { low: 25, medium: 35, high: 45 };
+const LOD_REFRESH_SECONDS = 0.2;
+/** Each impostor atlas holds this many side views of the tree, spaced evenly around Y. */
+const IMPOSTOR_VIEWS = 8;
+const IMPOSTOR_VIEW_SIZE: Record<GraphicsPreset['treeDetail'], THREE.Vector2> = {
+  low: new THREE.Vector2(192, 384),
+  medium: new THREE.Vector2(256, 512),
+  high: new THREE.Vector2(512, 1024),
+};
+/** Leaf cards are enlarged and thinned out so foliage reads as solid clumps instead of alpha speckle. */
+const LEAF_SIZE_BOOST = 1.45;
+const LEAF_COUNT_SCALE = 0.75;
+const TEXTURE_WAIT_MS = 15000;
+
+/** ez-tree loads its bundled textures asynchronously and exposes no callback, so poll until the image is present. */
+function textureReady(texture: THREE.Texture | null | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    const check = () => {
+      if (!texture || texture.image !== undefined || performance.now() - started > TEXTURE_WAIT_MS) resolve();
+      else window.setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
+interface TreeKind {
+  preset: keyof typeof TreePreset;
+  /** Metres from base to crown at scale 1. */
+  height: number;
+  seeds: number[];
+  /** Species shaping applied on top of the preset (bark, canopy density, leaf tone, growth direction). */
+  shape?: (options: Tree['options']) => void;
+  /** Foliage tone centre: warm/yellow-green share (0 = cool dark green) and brightness multiplier. */
+  foliage?: { warmth: number; brightness: number };
+}
+
+/**
+ * Course `tree.kind` → ez-tree preset (MIT, textured bark + leaf cards) plus species shaping so the belts mix tall
+ * conifers, broad spreading hardwoods, slender white-barked birches, weeping willows by the water and understory
+ * bushes. Unknown kinds fall back to pine.
+ */
+const TREE_KINDS: Record<string, TreeKind> = {
+  pine: { preset: 'Pine Medium', height: 15, seeds: [1201, 1202, 1203, 1204], foliage: { warmth: 0.25, brightness: 0.9 } },
+  tallpine: {
+    preset: 'Pine Large',
+    height: 23,
+    seeds: [1301, 1302, 1303],
+    shape: (options) => {
+      options.branch.length[0] *= 1.1;
+      options.leaves.count = Math.round(options.leaves.count * 1.15);
+    },
+    foliage: { warmth: 0.2, brightness: 0.82 },
+  },
+  oak: { preset: 'Oak Medium', height: 12, seeds: [2101, 2102, 2103, 2104], foliage: { warmth: 0.5, brightness: 1 } },
+  bigoak: {
+    preset: 'Oak Large',
+    height: 17,
+    seeds: [2201, 2202, 2203],
+    shape: (options) => {
+      options.branch.angle[1] += 12;
+      options.branch.length[1] *= 1.25;
+      options.leaves.count = Math.round(options.leaves.count * 1.3);
+      options.leaves.size *= 1.1;
+    },
+    foliage: { warmth: 0.45, brightness: 0.92 },
+  },
+  ash: { preset: 'Ash Medium', height: 12.5, seeds: [3101, 3102, 3103], foliage: { warmth: 0.6, brightness: 1.05 } },
+  aspen: { preset: 'Aspen Medium', height: 11, seeds: [4101, 4102, 4103], foliage: { warmth: 0.75, brightness: 1.1 } },
+  birch: {
+    preset: 'Aspen Large',
+    height: 14,
+    seeds: [4201, 4202, 4203],
+    shape: (options) => {
+      options.bark.type = 'birch';
+      options.bark.tint = 0xf2f0e8;
+      options.bark.textureScale.y *= 1.6;
+      options.branch.radius[0] *= 0.75;
+      options.branch.gnarliness[1] += 0.1;
+      options.leaves.size *= 0.8;
+      options.leaves.count = Math.round(options.leaves.count * 1.2);
+    },
+    foliage: { warmth: 0.85, brightness: 1.15 },
+  },
+  willow: {
+    preset: 'Ash Large',
+    height: 11,
+    seeds: [6101, 6102],
+    shape: (options) => {
+      options.bark.type = 'willow';
+      options.branch.angle[1] += 20;
+      options.branch.angle[2] += 25;
+      options.branch.force.direction = { x: 0, y: -1, z: 0 };
+      options.branch.force.strength = 0.06;
+      options.branch.length[2] *= 1.4;
+      options.branch.gnarliness[2] += 0.15;
+      options.leaves.type = 'ash';
+      options.leaves.size *= 0.85;
+      options.leaves.count = Math.round(options.leaves.count * 1.4);
+    },
+    foliage: { warmth: 0.7, brightness: 1.08 },
+  },
+  bush: { preset: 'Bush 1', height: 2.5, seeds: [5101, 5102], foliage: { warmth: 0.5, brightness: 0.95 } },
+  bush2: { preset: 'Bush 2', height: 1.8, seeds: [5201, 5202], foliage: { warmth: 0.6, brightness: 1 } },
+  bush3: { preset: 'Bush 3', height: 3.2, seeds: [5301], foliage: { warmth: 0.35, brightness: 0.9 } },
+};
+
+interface Variant {
+  branches: THREE.InstancedMesh;
+  leaves: THREE.InstancedMesh;
+  midBranches: THREE.InstancedMesh;
+  midLeaves: THREE.InstancedMesh;
+  cards: THREE.InstancedMesh;
+  /** Model-space extents at scale 1 after height normalisation. */
+  width: number;
+  height: number;
+  /** Trees using this variant: full transform (scale, rotation, position). */
+  members: { matrix: THREE.Matrix4; position: THREE.Vector3; scale: number; stretch: number; tint: THREE.Color }[];
+}
 
 function hash(value: number): number {
   const x = Math.sin(value * 12.9898) * 43758.5453;
   return x - Math.floor(x);
 }
 
-const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x4b3020, roughness: 0.95 });
+type MeshDetail = GraphicsPreset['treeDetail'] | 'mid';
 
-function canopyMaterial(tint: number): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color: new THREE.Color(0x2c6a33).offsetHSL(0, 0, (tint - 0.5) * 0.12), roughness: 0.95 });
+function detailScale(detail: MeshDetail): { segments: number; leaves: number; leafSize: number } {
+  if (detail === 'mid') return { segments: 0.45, leaves: 0.45, leafSize: 1.25 };
+  if (detail === 'low') return { segments: 0.5, leaves: 0.55, leafSize: 1.2 };
+  if (detail === 'medium') return { segments: 0.7, leaves: 0.8, leafSize: 1.05 };
+  return { segments: 1, leaves: 1, leafSize: 1 };
 }
 
-/** Procedural conifer: three stacked cones on a trunk. Used until an authored GLB replaces level 0. */
-function proceduralTree(scale: number, tint: number, detailed: boolean): THREE.Group {
-  const group = new THREE.Group();
-  const segments = detailed ? 10 : 6;
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.24, 2.6, segments), trunkMaterial);
-  trunk.position.y = 1.3;
-  trunk.castShadow = true;
-  group.add(trunk);
-  const canopy = canopyMaterial(tint);
-  const tiers = detailed ? 3 : 2;
-  for (let tier = 0; tier < tiers; tier += 1) {
-    const radius = 1.9 - tier * 0.45;
-    const height = 3.2 - tier * 0.4;
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(radius, height, segments), canopy);
-    cone.position.y = 3.2 + tier * 1.6;
-    cone.castShadow = true;
-    group.add(cone);
+/** Generates one ez-tree at scale 1 (normalised to `height` metres) and returns its raw geometry + textures. */
+function generateTree(kind: TreeKind, seed: number, detail: MeshDetail): { tree: Tree; scale: number } {
+  const tree = new Tree();
+  tree.loadPreset(kind.preset);
+  const factor = detailScale(detail);
+  const options = tree.options;
+  options.seed = seed;
+  kind.shape?.(options);
+  for (const level of [0, 1, 2, 3] as const) {
+    options.branch.segments[level] = Math.max(3, Math.round(options.branch.segments[level] * factor.segments));
   }
-  group.scale.setScalar(scale);
-  return group;
+  options.leaves.count = Math.max(4, Math.round(options.leaves.count * factor.leaves * LEAF_COUNT_SCALE));
+  options.leaves.size *= LEAF_SIZE_BOOST * factor.leafSize;
+  tree.generate();
+  tree.branchesMesh.geometry.computeBoundingBox();
+  tree.leavesMesh.geometry.computeBoundingBox();
+  const box = tree.branchesMesh.geometry.boundingBox!.clone();
+  if (tree.leavesMesh.geometry.boundingBox) box.union(tree.leavesMesh.geometry.boundingBox);
+  return { tree, scale: kind.height / Math.max(1e-3, box.max.y) };
+}
+
+/**
+ * Alpha-tested foliage thins out with distance because mip filtering averages leaf alpha toward zero. Scaling alpha
+ * back up by the sampled mip level (and biasing the lookup half a level sharper) keeps far canopies at full coverage
+ * so silhouettes stay solid and recognisable instead of dissolving into a soft speckle.
+ */
+const FOLIAGE_MAP_FRAGMENT = `
+  #ifdef USE_MAP
+  {
+    vec2 texel = vMapUv * vec2(textureSize(map, 0));
+    vec2 dx = dFdx(texel);
+    vec2 dy = dFdy(texel);
+    float lod = max(0.0, 0.5 * log2(max(dot(dx, dx), dot(dy, dy))));
+    vec4 sampledDiffuseColor = texture(map, vMapUv, -0.5);
+    sampledDiffuseColor.a = clamp(sampledDiffuseColor.a * (1.0 + lod * 0.4), 0.0, 1.0);
+    diffuseColor *= sampledDiffuseColor;
+  }
+  #endif`;
+
+/**
+ * Camera-facing card whose size and yaw come from the instance matrix. The fragment samples the atlas column whose
+ * baked view best matches the direction the camera sees this tree from, so silhouettes change as the camera orbits.
+ */
+function impostorMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
+  const material = new THREE.MeshBasicMaterial({ map, alphaTest: 0.35, side: THREE.DoubleSide, transparent: false });
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', FOLIAGE_MAP_FRAGMENT);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\nconst float IMPOSTOR_VIEWS = ${IMPOSTOR_VIEWS}.0;`)
+      .replace(
+        '#include <project_vertex>',
+        `vec3 instPos = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+      vec3 toCamera = cameraPosition - instPos;
+      toCamera.y = 0.0;
+      toCamera = normalize(toCamera + vec3(0.0, 0.0, 1e-4));
+      vec3 right = vec3(toCamera.z, 0.0, -toCamera.x);
+      float cardWidth = length(instanceMatrix[0].xyz);
+      float cardHeight = length(instanceMatrix[1].xyz);
+      transformed = instPos + right * position.x * cardWidth + vec3(0.0, position.y * cardHeight, 0.0);
+      vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      float treeYaw = atan(-instanceMatrix[0].z, instanceMatrix[0].x);
+      float viewYaw = atan(toCamera.x, toCamera.z) - treeYaw;
+      float slot = mod(floor(viewYaw / (PI2 / IMPOSTOR_VIEWS) + 0.5), IMPOSTOR_VIEWS);
+      vMapUv.x = (vMapUv.x + slot) / IMPOSTOR_VIEWS;`,
+      );
+  };
+  material.customProgramCacheKey = () => 'tree-impostor';
+  return material;
 }
 
 export class Vegetation {
   readonly group = new THREE.Group();
+  private readonly variants = new Map<string, Variant>();
+  private readonly windUniform = { value: 0 };
+  private readonly sunUniform = { value: new THREE.Vector3(0.4, 0.8, 0.45) };
+  private readonly billboardDistance: number;
+  private readonly nearDistance: number;
+  private readonly impostorViewSize: THREE.Vector2;
+  private readonly lastCamera = new THREE.Vector3(Number.NaN, 0, 0);
+  private lodClock = 0;
+  private readonly impostorScene = new THREE.Scene();
+  private readonly impostorCamera = new THREE.OrthographicCamera();
 
-  constructor(course: LoadedCourse, environment?: Environment, renderer?: THREE.WebGLRenderer) {
-    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-    if (renderer) loader.setKTX2Loader(new KTX2Loader().setTranscoderPath('/basis/').detectSupport(renderer));
-    const billboardTexture = this.billboardTexture();
-    const modelCache = new Map<string, Promise<THREE.Group>>();
-    const billboardGeometry = new THREE.PlaneGeometry(1, 1);
+  constructor(course: LoadedCourse, preset: GraphicsPreset, environment?: Environment, renderer?: THREE.WebGLRenderer) {
+    if (environment) this.sunUniform.value.copy(environment.sunDirection).normalize();
+    this.billboardDistance = BILLBOARD_DISTANCE[preset.treeDetail];
+    this.nearDistance = NEAR_DISTANCE[preset.treeDetail];
+    const maxTexture = renderer?.capabilities.maxTextureSize ?? 2048;
+    this.impostorViewSize = IMPOSTOR_VIEW_SIZE[preset.treeDetail].clone();
+    while (this.impostorViewSize.x * IMPOSTOR_VIEWS > maxTexture) this.impostorViewSize.multiplyScalar(0.5);
+    const cardGeometry = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
+    const trees = course.manifest.features.trees;
 
-    course.manifest.features.trees.forEach((tree, index) => {
-      const tint = hash(index * 7.7);
-      const scale = tree.scale * (0.9 + hash(index * 3.3) * 0.2);
-      const lod = new THREE.LOD();
-      lod.position.set(tree.position.x, course.sampler.heightAt(tree.position.x, tree.position.z), tree.position.z);
-      lod.rotation.y = tree.rotation;
-      const detail = proceduralTree(scale, tint, true);
-      lod.addLevel(detail, DETAIL_DISTANCE);
-      lod.addLevel(proceduralTree(scale, tint, false), LOW_POLY_DISTANCE);
-      const billboard = new THREE.Mesh(
-        billboardGeometry,
-        new THREE.MeshBasicMaterial({ map: billboardTexture, alphaTest: 0.5, side: THREE.DoubleSide, color: new THREE.Color(0xffffff).offsetHSL(0, 0, (tint - 0.5) * 0.1) }),
-      );
-      billboard.scale.set(5 * scale, 8.5 * scale, 1);
-      billboard.position.y = 4.2 * scale;
-      billboard.userData.excludeAO = true;
-      billboard.onBeforeRender = (_renderer, _scene, camera) => {
-        billboard.rotation.y = Math.atan2(camera.position.x - lod.position.x, camera.position.z - lod.position.z) - lod.rotation.y;
+    // Bucket trees per (kind, seed) variant so each variant is one instanced draw for branches, one for leaves, one for cards.
+    const buckets = new Map<string, { kind: TreeKind; seed: number; members: Variant['members'] }>();
+    trees.forEach((tree, index) => {
+      const kind = TREE_KINDS[tree.kind] ?? TREE_KINDS.pine!;
+      const seed = kind.seeds[Math.floor(hash(index * 5.31) * kind.seeds.length)] ?? kind.seeds[0]!;
+      const key = `${tree.kind}:${seed}`;
+      const bucket = buckets.get(key) ?? { kind, seed, members: [] };
+      buckets.set(key, bucket);
+      const position = new THREE.Vector3(tree.position.x, course.sampler.heightAt(tree.position.x, tree.position.z) - 0.05, tree.position.z);
+      const scale = tree.scale;
+      const stretch = tree.stretch ?? 1;
+      const matrix = new THREE.Matrix4().compose(position, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), tree.rotation), new THREE.Vector3(scale, scale * stretch, scale));
+      // Per-tree foliage tone around the species centre: lush/dark through yellow-green so neighbours of the same
+      // variant never match and conifers stay darker than birches.
+      const foliage = kind.foliage ?? { warmth: 0.5, brightness: 1 };
+      const warmth = THREE.MathUtils.clamp(foliage.warmth + (hash(index * 2.17) - 0.5) * 0.5, 0, 1);
+      const brightness = foliage.brightness * (0.8 + hash(index * 3.91) * 0.34);
+      const tint = new THREE.Color((0.84 + warmth * 0.3) * brightness, (0.9 + warmth * 0.1) * brightness, (0.78 + (1 - warmth) * 0.22) * brightness);
+      bucket.members.push({ matrix, position, scale, stretch, tint });
+    });
+
+    for (const [key, bucket] of buckets) {
+      const { tree, scale } = generateTree(bucket.kind, bucket.seed, preset.treeDetail);
+      const branchesGeometry = tree.branchesMesh.geometry.clone().scale(scale, scale, scale);
+      const leavesGeometry = tree.leavesMesh.geometry.clone().scale(scale, scale, scale);
+      const mid = generateTree(bucket.kind, bucket.seed, 'mid');
+      const midBranchesGeometry = mid.tree.branchesMesh.geometry.clone().scale(scale, scale, scale);
+      const midLeavesGeometry = mid.tree.leavesMesh.geometry.clone().scale(scale, scale, scale);
+      mid.tree.branchesMesh.geometry.dispose();
+      mid.tree.leavesMesh.geometry.dispose();
+      branchesGeometry.computeBoundingBox();
+      leavesGeometry.computeBoundingBox();
+      const box = branchesGeometry.boundingBox!.clone().union(leavesGeometry.boundingBox!);
+      const source = tree.branchesMesh.material as THREE.MeshPhongMaterial;
+      const leafSource = tree.leavesMesh.material as THREE.MeshPhongMaterial;
+      const maxAnisotropy = renderer?.capabilities.getMaxAnisotropy() ?? 1;
+      for (const texture of [source.map, source.normalMap, source.aoMap, leafSource.map]) {
+        if (texture) texture.anisotropy = maxAnisotropy;
+      }
+      const barkMaterial = new THREE.MeshStandardMaterial({ map: source.map, normalMap: source.normalMap, aoMap: source.aoMap, roughness: 0.95, metalness: 0, color: source.color });
+      if (barkMaterial.aoMap) barkMaterial.aoMap.channel = 0;
+      const leafMaterial = new THREE.MeshStandardMaterial({ map: leafSource.map, color: leafSource.color, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.75, metalness: 0 });
+      const wind = this.windUniform;
+      const sunDirection = this.sunUniform;
+      leafMaterial.onBeforeCompile = (shader) => {
+        shader.uniforms.uWindTime = wind;
+        shader.uniforms.uSunDirection = sunDirection;
+        // Leaves transmit light: canopies between the camera and the sun glow warm instead of going flat and dark.
+        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec3 uSunDirection;').replace('#include <map_fragment>', FOLIAGE_MAP_FRAGMENT).replace(
+          '#include <lights_fragment_end>',
+          `#include <lights_fragment_end>
+          {
+            vec3 toCamera = normalize(vViewPosition);
+            vec3 sunView = normalize((viewMatrix * vec4(uSunDirection, 0.0)).xyz);
+            float backlit = pow(clamp(dot(-toCamera, sunView), 0.0, 1.0), 3.0);
+            reflectedLight.directDiffuse += diffuseColor.rgb * vec3(1.0, 0.96, 0.78) * backlit * 0.5;
+          }`,
+        );
+        shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nuniform float uWindTime;').replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          {
+            vec3 instRoot = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+            float phase = dot(instRoot.xz, vec2(0.13, 0.17)) + uWindTime;
+            float sway = clamp(transformed.y * 0.08, 0.0, 1.0);
+            transformed += vec3(sin(phase * 1.7) * 0.5 + sin(phase * 3.1) * 0.25, 0.0, cos(phase * 1.3) * 0.4) * 0.35 * sway;
+          }`,
+        );
       };
-      lod.addLevel(billboard, BILLBOARD_DISTANCE);
-      this.group.add(lod);
+      leafMaterial.customProgramCacheKey = () => 'tree-leaves-wind';
+      environment?.setupMaterial(barkMaterial);
+      environment?.setupMaterial(leafMaterial);
 
-      const cached = modelCache.get(tree.kind) ?? loader.loadAsync(`/models/trees/${tree.kind}.glb`).then((asset) => asset.scene);
-      modelCache.set(tree.kind, cached);
-      void cached
-        .then((scene) => {
-          const model = scene.clone(true);
-          model.scale.setScalar(scale);
-          model.traverse((object) => {
-            if (object instanceof THREE.Mesh) {
-              object.castShadow = true;
-              environment?.setupMaterial(object.material);
-            }
-          });
-          detail.clear();
-          detail.scale.setScalar(1);
-          detail.add(model);
-        })
-        .catch(() => undefined);
-    });
+      const count = bucket.members.length;
+      const branches = new THREE.InstancedMesh(branchesGeometry, barkMaterial, count);
+      const leaves = new THREE.InstancedMesh(leavesGeometry, leafMaterial, count);
+      const midBranches = new THREE.InstancedMesh(midBranchesGeometry, barkMaterial, count);
+      const midLeaves = new THREE.InstancedMesh(midLeavesGeometry, leafMaterial, count);
+      for (const mesh of [branches, midBranches]) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+      }
+      for (const mesh of [leaves, midLeaves]) {
+        mesh.castShadow = true;
+        mesh.userData.excludeAO = true;
+        mesh.frustumCulled = false;
+      }
 
-    this.group.traverse((object) => {
-      if (object instanceof THREE.Mesh) environment?.setupMaterial(object.material);
-    });
-  }
-
-  private billboardTexture(): THREE.Texture {
-    const canvas = this.billboardCanvas();
-    const pixels = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data ?? new Uint8ClampedArray(canvas.width * canvas.height * 4);
-    const texture = new THREE.DataTexture(new Uint8Array(pixels.buffer), canvas.width, canvas.height, THREE.RGBAFormat, THREE.UnsignedByteType);
-    texture.flipY = true;
-    texture.generateMipmaps = true;
-    texture.minFilter = THREE.LinearMipmapLinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.needsUpdate = true;
-    return texture;
-  }
-
-  private billboardCanvas(): HTMLCanvasElement {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 256;
-    const context = canvas.getContext('2d');
-    if (context) {
-      context.clearRect(0, 0, 128, 256);
-      context.fillStyle = '#5b3926';
-      context.fillRect(58, 200, 12, 56);
-      context.fillStyle = '#2c6a33';
-      for (let tier = 0; tier < 3; tier += 1) {
-        const top = 10 + tier * 60;
-        const halfWidth = 34 + tier * 14;
-        context.beginPath();
-        context.moveTo(64, top);
-        context.lineTo(64 - halfWidth, top + 90);
-        context.lineTo(64 + halfWidth, top + 90);
-        context.closePath();
-        context.fill();
+      const cards = new THREE.InstancedMesh(cardGeometry, new THREE.MeshBasicMaterial({ visible: false }), count);
+      cards.userData.excludeAO = true;
+      cards.frustumCulled = false;
+      this.group.add(branches, leaves, midBranches, midLeaves, cards);
+      this.variants.set(key, { branches, leaves, midBranches, midLeaves, cards, width: Math.max(box.max.x - box.min.x, box.max.z - box.min.z), height: box.max.y, members: bucket.members });
+      tree.branchesMesh.geometry.dispose();
+      tree.leavesMesh.geometry.dispose();
+      if (renderer) {
+        void Promise.all([textureReady(source.map), textureReady(leafSource.map)]).then(() => {
+          if (this.disposed) return;
+          const baked = this.bakeImpostor(renderer, branchesGeometry, leavesGeometry, source, leafSource, box, environment);
+          cards.material = impostorMaterial(baked);
+        });
       }
     }
-    return canvas;
+    this.refreshLod(new THREE.Vector3(0, 0, 0), true);
+  }
+
+  private disposed = false;
+
+  dispose(): void {
+    this.disposed = true;
+    for (const variant of this.variants.values()) {
+      variant.branches.dispose();
+      variant.leaves.dispose();
+      variant.midBranches.dispose();
+      variant.midLeaves.dispose();
+      variant.cards.dispose();
+    }
+  }
+
+  /** Re-buckets instances into near geometry / far cards when the camera has moved. */
+  update(camera: THREE.Vector3, dtSeconds: number): void {
+    this.windUniform.value += dtSeconds;
+    this.lodClock += dtSeconds;
+    if (this.lodClock < LOD_REFRESH_SECONDS) return;
+    this.lodClock = 0;
+    this.refreshLod(camera, false);
+  }
+
+  private refreshLod(camera: THREE.Vector3, force: boolean): void {
+    if (!force && this.lastCamera.distanceToSquared(camera) < 1) return;
+    this.lastCamera.copy(camera);
+    const cardMatrix = new THREE.Matrix4();
+    const cardScale = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const far2 = this.billboardDistance * this.billboardDistance;
+    const near2 = this.nearDistance * this.nearDistance;
+    for (const variant of this.variants.values()) {
+      let near = 0;
+      let mid = 0;
+      let far = 0;
+      for (const member of variant.members) {
+        const dx = member.position.x - camera.x;
+        const dz = member.position.z - camera.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < near2) {
+          variant.branches.setMatrixAt(near, member.matrix);
+          variant.leaves.setMatrixAt(near, member.matrix);
+          variant.leaves.setColorAt(near, member.tint);
+          near += 1;
+        } else if (d2 < far2) {
+          variant.midBranches.setMatrixAt(mid, member.matrix);
+          variant.midLeaves.setMatrixAt(mid, member.matrix);
+          variant.midLeaves.setColorAt(mid, member.tint);
+          mid += 1;
+        } else {
+          cardScale.set(variant.width * member.scale, variant.height * member.scale * member.stretch, 1);
+          cardMatrix.compose(member.position, rotation.setFromRotationMatrix(member.matrix), cardScale);
+          variant.cards.setMatrixAt(far, cardMatrix);
+          far += 1;
+        }
+      }
+      variant.branches.count = near;
+      variant.leaves.count = near;
+      variant.midBranches.count = mid;
+      variant.midLeaves.count = mid;
+      variant.cards.count = far;
+      for (const mesh of [variant.branches, variant.leaves, variant.midBranches, variant.midLeaves, variant.cards]) {
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
+    }
+  }
+
+  /**
+   * Renders the tree from IMPOSTOR_VIEWS directions around Y into one half-float atlas, lit to match the course
+   * (same sun direction and sky/ground tints) so far cards blend with the geometry they replace.
+   */
+  private bakeImpostor(
+    renderer: THREE.WebGLRenderer,
+    branchesGeometry: THREE.BufferGeometry,
+    leavesGeometry: THREE.BufferGeometry,
+    barkSource: THREE.MeshPhongMaterial,
+    leafSource: THREE.MeshPhongMaterial,
+    box: THREE.Box3,
+    environment?: Environment,
+  ): THREE.Texture {
+    const viewSize = this.impostorViewSize;
+    const target = new THREE.WebGLRenderTarget(viewSize.x * IMPOSTOR_VIEWS, viewSize.y, {
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType,
+      colorSpace: THREE.LinearSRGBColorSpace,
+      generateMipmaps: true,
+      minFilter: THREE.LinearMipmapLinearFilter,
+      anisotropy: renderer.capabilities.getMaxAnisotropy(),
+    });
+    const bark = new THREE.MeshStandardMaterial({ map: barkSource.map, normalMap: barkSource.normalMap, aoMap: barkSource.aoMap, color: barkSource.color, roughness: 0.95, metalness: 0 });
+    const leaves = new THREE.MeshStandardMaterial({ map: leafSource.map, color: leafSource.color, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
+    const scene = this.impostorScene;
+    scene.clear();
+    const model = new THREE.Group();
+    model.add(new THREE.Mesh(branchesGeometry, bark), new THREE.Mesh(leavesGeometry, leaves));
+    scene.add(model);
+    scene.add(new THREE.HemisphereLight(0xbfd6df, 0x50603f, 1.3));
+    const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
+    sun.position.copy(environment?.sunDirection ?? new THREE.Vector3(0.4, 0.8, 0.45)).multiplyScalar(50);
+    scene.add(sun);
+    const width = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
+    const camera = this.impostorCamera;
+    camera.left = -width / 2;
+    camera.right = width / 2;
+    camera.top = box.max.y;
+    camera.bottom = 0;
+    camera.near = -width * 2;
+    camera.far = width * 2;
+
+    const previousTarget = renderer.getRenderTarget();
+    const previousClear = new THREE.Color();
+    renderer.getClearColor(previousClear);
+    const previousAlpha = renderer.getClearAlpha();
+    const previousShadows = renderer.shadowMap.enabled;
+    const previousAutoClear = renderer.autoClear;
+    renderer.shadowMap.enabled = false;
+    renderer.setRenderTarget(target);
+    // Transparent texels keep the foliage colour so mip blending at the silhouette does not darken to black.
+    renderer.setClearColor(leafSource.color, 0);
+    renderer.clear();
+    renderer.autoClear = false;
+    for (let view = 0; view < IMPOSTOR_VIEWS; view++) {
+      const yaw = (view / IMPOSTOR_VIEWS) * Math.PI * 2;
+      camera.position.set(Math.sin(yaw) * width, 0, Math.cos(yaw) * width);
+      camera.lookAt(0, 0, 0);
+      camera.updateProjectionMatrix();
+      target.viewport.set(view * viewSize.x, 0, viewSize.x, viewSize.y);
+      renderer.setRenderTarget(target);
+      renderer.render(scene, camera);
+    }
+    renderer.autoClear = previousAutoClear;
+    renderer.setRenderTarget(previousTarget);
+    renderer.setClearColor(previousClear, previousAlpha);
+    renderer.shadowMap.enabled = previousShadows;
+    scene.clear();
+    bark.dispose();
+    leaves.dispose();
+    return target.texture;
   }
 }
