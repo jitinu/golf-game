@@ -36,7 +36,7 @@ interface Side {
 
 const SIDES: Side[] = [
   { name: 'Left', sign: 1, pole: new THREE.Vector3(0.35, -1, -0.35).normalize() },
-  { name: 'Right', sign: -1, pole: new THREE.Vector3(-0.35, -1, -0.35).normalize() },
+  { name: 'Right', sign: -1, pole: new THREE.Vector3(-0.1, -1, -0.3).normalize() },
 ];
 
 interface BodyPose {
@@ -347,9 +347,9 @@ function buildSwing(type: SwingType): Swing {
   const impactTime = IMPACT_TIME[type];
   // Tour tempo is roughly 3:1 backswing to downswing; the short game keeps a steadier, more even rhythm.
   const topTime = impactTime * (type === 'swing_full' ? 0.72 : 0.64);
-  const phiTop = -2.85 * amplitude;
-  const phiEnd = 2.55 * amplitude;
-  const hinge = 1.75 * Math.pow(amplitude, 1.2);
+  const phiTop = -2.7 * amplitude;
+  const phiEnd = 2.3 * amplitude;
+  const hinge = 1.85 * Math.pow(amplitude, 1.2);
   // One C1-continuous arc: the downswing is a Hermite segment leaving the top at rest and arriving at impact at
   // IMPACT_SPEED_RATIO × its average speed; the follow-through carries exactly that speed and decays
   // exponentially into a held finish, so nothing hitches at the top or at the ball.
@@ -425,12 +425,12 @@ function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   const hinge = phi < 0 ? -swing.hinge * (lagging ? held : Math.pow(fraction, 1.4)) : swing.hinge * held * 0.9;
   const armRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi);
   const clubRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi + hinge);
-  const radiusScale = phi < 0 ? 1 - 0.08 * fraction * fraction : 1 - 0.05 * fraction * fraction;
-  // At address the hands hang below the shoulder plane; going back they rise onto it (hands over the trail shoulder
-  // at the top) and finish just above it, rather than being carried around below the plane the whole way.
+  const radiusScale = phi < 0 ? 1 - 0.08 * fraction * fraction : 1 - 0.18 * fraction * fraction;
+  // At address the hands hang below the shoulder plane; going back they rise toward it (hands beside the trail
+  // shoulder at the top, not over the head) and in the finish they fold behind the head, below the plane.
   const armVector = address.butt.clone().sub(address.pivot);
   const offPlane = armVector.dot(address.normal);
-  const lift = phi < 0 ? 1 - 1.05 * Math.pow(fraction, 1.3) : 1 - 1.2 * Math.pow(fraction, 1.2);
+  const lift = phi < 0 ? 1 - 0.55 * Math.pow(fraction, 1.3) : 1 + 0.35 * Math.pow(fraction, 1.2);
   const inPlane = armVector.clone().addScaledVector(address.normal, -offPlane).multiplyScalar(radiusScale).applyQuaternion(armRotation);
   const butt = inPlane.addScaledVector(address.normal, offPlane * lift).add(address.pivot);
   return {

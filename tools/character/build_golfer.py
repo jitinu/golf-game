@@ -10,6 +10,7 @@ import sys
 import bmesh
 import bpy
 from mathutils import Vector
+from mathutils.kdtree import KDTree
 
 
 def dynamic_import(absolute_package_str, key):
@@ -197,6 +198,284 @@ def evaluated_vertices(obj):
     return obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data.vertices
 
 
+def cull_mesh_under_clothing(
+    mesh_obj,
+    clothing_objs,
+    margin,
+    side_factor=0.1,
+    protected_groups=None,
+    unprotected_groups=None,
+    distance_only_groups=None,
+    distance_only_margin=None,
+    hem_boundary_points=None,
+    hem_guard=0.06,
+    max_z=None,
+    min_z=None,
+    label="mesh",
+):
+    """Remove mesh faces fully enclosed by evaluated clothing meshes."""
+    if not clothing_objs:
+        print(f"{label} clothing cull: no clothing meshes found")
+        return 0, len(mesh_obj.data.polygons)
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated_clothing = [(obj.evaluated_get(depsgraph), obj.matrix_world.copy()) for obj in clothing_objs]
+    protected_groups = protected_groups or set()
+    unprotected_groups = unprotected_groups or set()
+    distance_only_groups = distance_only_groups or set()
+    distance_only_margin = margin if distance_only_margin is None else distance_only_margin
+    hem_boundary_points = hem_boundary_points or []
+    covered = []
+    for vertex in mesh_obj.data.vertices:
+        if (
+            any(group_weight(vertex, {group_index}) > 0.5 for group_index in protected_groups)
+            and not any(group_weight(vertex, {group_index}) > 0.5 for group_index in unprotected_groups)
+        ):
+            covered.append(False)
+            continue
+        world_vertex = mesh_obj.matrix_world @ vertex.co
+        distance_only = any(group_weight(vertex, {group_index}) > 0.5 for group_index in distance_only_groups)
+        is_covered = False
+        for clothing, clothing_world in evaluated_clothing:
+            clothing_local = clothing_world.inverted() @ world_vertex
+            hit, nearest_local, normal_local, _ = clothing.closest_point_on_mesh(
+                clothing_local, distance=margin, depsgraph=depsgraph
+            )
+            if not hit:
+                continue
+            nearest_world = clothing_world @ nearest_local
+            normal_world = (clothing_world.to_3x3().inverted().transposed() @ normal_local).normalized()
+            offset = world_vertex - nearest_world
+            distance = offset.length
+            if hem_boundary_points and any((nearest_world - hem_point).length <= hem_guard for hem_point in hem_boundary_points):
+                is_covered = False
+                break
+            coverage_margin = distance_only_margin if distance_only else margin
+            if distance < coverage_margin and (
+                distance_only or normal_world.dot(offset) < -side_factor * distance
+            ):
+                is_covered = True
+                break
+        covered.append(is_covered)
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh_obj.data)
+    faces_to_delete = [
+        face for face in bm.faces
+        if all(covered[vertex.index] for vertex in face.verts)
+        and (max_z is None or all(vertex.co.z < max_z for vertex in face.verts))
+        or (min_z is not None and all(vertex.co.z > min_z for vertex in face.verts))
+    ]
+    deleted_count = len(faces_to_delete)
+    kept_count = len(bm.faces) - deleted_count
+    if faces_to_delete:
+        bmesh.ops.delete(bm, geom=faces_to_delete, context="FACES")
+        bm.to_mesh(mesh_obj.data)
+        mesh_obj.data.update()
+    bm.free()
+    print(f"{label} clothing cull: deleted {deleted_count} faces, kept {kept_count} faces")
+    return deleted_count, kept_count
+
+
+def clear_clothing_head_weights(clothing):
+    """Keep clothing deformation driven by the torso and limbs, not head/neck bones."""
+    target_groups = [
+        group
+        for group in clothing.vertex_groups
+        if group.name.lower().endswith("head")
+        or group.name.lower().endswith("neck")
+        or group.name.lower().endswith("mixamorig:head")
+        or group.name.lower().endswith("mixamorig:neck")
+    ]
+    if not target_groups:
+        return
+    target_indices = {group.index for group in target_groups}
+    torso_group = next(
+        (group for group in clothing.vertex_groups if group.name.lower().endswith("spine2")),
+        None,
+    )
+    for vertex in clothing.data.vertices:
+        removed_weight = sum(
+            weight.weight for weight in vertex.groups if weight.group in target_indices
+        )
+        for group in target_groups:
+            if any(weight.group == group.index for weight in vertex.groups):
+                group.remove([vertex.index])
+        remaining = [weight for weight in vertex.groups if weight.group not in target_indices]
+        total = sum(weight.weight for weight in remaining)
+        if torso_group is not None and removed_weight > 0:
+            torso_group.add([vertex.index], removed_weight, "ADD")
+            remaining = [weight for weight in vertex.groups if weight.group not in target_indices]
+            total = sum(weight.weight for weight in remaining)
+        if total > 0:
+            for weight in remaining:
+                clothing.vertex_groups[weight.group].add(
+                    [vertex.index], weight.weight / total, "REPLACE"
+                )
+        elif torso_group is not None:
+            torso_group.add([vertex.index], 1.0, "REPLACE")
+
+
+def lower_hem_boundary_points(clothing):
+    """Return world-space points along the lower boundary of a clothing mesh."""
+    evaluated = clothing.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.data
+    if not mesh.vertices:
+        return []
+    midpoint = (min(vertex.co.z for vertex in mesh.vertices) + max(vertex.co.z for vertex in mesh.vertices)) * 0.5
+    source = bmesh.new()
+    source.from_mesh(mesh)
+    points = [
+        clothing.matrix_world @ vertex.co
+        for edge in source.edges
+        if edge.is_boundary and all(vertex.co.z < midpoint for vertex in edge.verts)
+        for vertex in edge.verts
+    ]
+    source.free()
+    return points
+
+
+def polo_weight_transfer_data(polo):
+    """Build nearest-vertex lookup and deform weights from evaluated polo geometry."""
+    evaluated = polo.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh = evaluated.data
+    tree = KDTree(len(mesh.vertices))
+    normal_matrix = polo.matrix_world.to_3x3().inverted().transposed()
+    normals = []
+    for vertex in mesh.vertices:
+        tree.insert(polo.matrix_world @ vertex.co, vertex.index)
+        normals.append((normal_matrix @ vertex.normal).normalized())
+    tree.balance()
+    group_names = {group.index: group.name for group in polo.vertex_groups}
+    weights = [
+        [
+            (group_names[group.group], group.weight)
+            for group in vertex.groups
+            if group.group in group_names
+        ]
+        for vertex in mesh.vertices
+    ]
+    return tree, weights, normals
+
+
+def copy_polo_weights_nearby(
+    mesh_obj,
+    transfer_data,
+    max_distance=0.05,
+    target_group_indices=None,
+    require_inner_side=True,
+):
+    """Make skin under the polo deform with the nearest polo vertex."""
+    if transfer_data is None:
+        return 0
+    tree, polo_weights, polo_normals = transfer_data
+    polo_group_names = {
+        name
+        for weights in polo_weights
+        for name, _ in weights
+    }
+    target_groups = {
+        group.name: group
+        for group in mesh_obj.vertex_groups
+        if group.name in polo_group_names
+    }
+    copied = 0
+    for vertex in mesh_obj.data.vertices:
+        if target_group_indices is not None and not any(
+            group.group in target_group_indices and group.weight > 0.5
+            for group in vertex.groups
+        ):
+            continue
+        world_vertex = mesh_obj.matrix_world @ vertex.co
+        nearest_point, nearest, distance = tree.find(world_vertex)
+        if distance > max_distance:
+            continue
+        offset = world_vertex - nearest_point
+        if (
+            require_inner_side
+            and polo_normals[nearest].dot(offset) >= -0.1 * distance
+        ):
+            continue
+        for group in list(vertex.groups):
+            target_group = mesh_obj.vertex_groups[group.group]
+            if target_group.name in polo_group_names:
+                target_group.remove([vertex.index])
+        mapped_weights = [
+            (target_groups[name], weight)
+            for name, weight in polo_weights[nearest]
+            if name in target_groups and weight > 0
+        ]
+        total = sum(weight for _, weight in mapped_weights)
+        if total <= 0:
+            continue
+        for group, weight in mapped_weights:
+            group.add([vertex.index], weight / total, "REPLACE")
+        copied += 1
+    print(f"{mesh_obj.name} polo weight transfer: copied {copied} vertices")
+    return copied
+
+
+def push_vertices_under_polo(mesh_obj, transfer_data, max_distance=0.05, amount=0.012):
+    """Move pants vertices under the polo slightly inward to prevent hem poke-through."""
+    if transfer_data is None:
+        return 0
+    tree, _, _ = transfer_data
+    pushed = 0
+    for vertex in mesh_obj.data.vertices:
+        world_vertex = mesh_obj.matrix_world @ vertex.co
+        _, _, distance = tree.find(world_vertex)
+        if distance > max_distance:
+            continue
+        normal = vertex.normal.normalized()
+        if normal.length_squared == 0:
+            continue
+        vertex.co -= normal * amount
+        pushed += 1
+    if pushed:
+        mesh_obj.data.update()
+    print(f"{mesh_obj.name} polo inward push: moved {pushed} vertices")
+    return pushed
+
+
+def cull_body_under_clothing(body, clothing_objs, margin):
+    """Remove body faces fully enclosed by the evaluated polo or pants meshes."""
+    protected_groups = {
+        group.index
+        for group in body.vertex_groups
+        if group.name.lower().endswith("head") or "hand" in group.name.lower()
+    }
+    neck_groups = {group.index for group in body.vertex_groups if group.name.lower().endswith("neck")}
+    shoulder_groups = {group.index for group in body.vertex_groups if "shoulder" in group.name.lower()}
+    upper_arm_groups = {
+        group.index
+        for group in body.vertex_groups
+        if group.name.lower().endswith("leftarm") or group.name.lower().endswith("rightarm")
+    }
+    hip_groups = {group.index for group in body.vertex_groups if group.name.lower().endswith("hips")}
+    torso_groups = {
+        group.index
+        for group in body.vertex_groups
+        if any(group.name.lower().endswith(name) for name in ("spine", "spine1", "spine2"))
+    }
+    return cull_mesh_under_clothing(
+        body,
+        clothing_objs,
+        margin,
+        side_factor=0.1,
+        protected_groups=protected_groups,
+        unprotected_groups=neck_groups,
+        distance_only_groups=(
+            neck_groups
+            | shoulder_groups
+            | upper_arm_groups
+            | hip_groups
+            | torso_groups
+        ),
+        distance_only_margin=0.1,
+        label="Body",
+    )
+
+
 def add_glove(body, tex_dir):
     """Left-hand golf glove: hand-weighted skin faces get a white leather material slot."""
     hand_groups = {g.index for g in body.vertex_groups if "LeftHand" in g.name}
@@ -379,12 +658,63 @@ def child_with_material(fragment):
 
 pants_obj = child_with_material("wool_pants")
 eyes_obj = child_with_material("high-poly")
+culling_polo = child_with_material("polo")
+culling_clothes = [obj for obj in (culling_polo, pants_obj) if obj is not None]
+if culling_polo is not None:
+    clear_clothing_head_weights(culling_polo)
+    polo_transfer_data = polo_weight_transfer_data(culling_polo)
+else:
+    polo_transfer_data = None
+cull_body_under_clothing(export_basemesh, culling_clothes, 0.05)
 add_glove(export_basemesh, TEX)
 extras = []
 if eyes_obj is not None:
     facing = facing_sign(export_basemesh, eyes_obj)
     if pants_obj is not None:
         extras += add_belt(pants_obj, export_root, facing, TEX) or []
+        cull_pants_clothing = [culling_polo] if culling_polo is not None else []
+        cull_mesh_under_clothing(
+            pants_obj,
+            cull_pants_clothing,
+            0.03,
+            side_factor=0.1,
+            hem_boundary_points=lower_hem_boundary_points(culling_polo) if culling_polo is not None else [],
+            label="Pants",
+        )
+        copy_polo_weights_nearby(
+            pants_obj,
+            polo_transfer_data,
+            require_inner_side=False,
+        )
+        push_vertices_under_polo(pants_obj, polo_transfer_data)
+        copy_polo_weights_nearby(
+            export_basemesh,
+            polo_transfer_data,
+            max_distance=0.025,
+            target_group_indices=(
+                {
+                    group.index
+                    for group in export_basemesh.vertex_groups
+                    if group.name.lower().endswith("neck")
+                    or "shoulder" in group.name.lower()
+                    or group.name.lower().endswith("leftarm")
+                    or group.name.lower().endswith("rightarm")
+                    or group.name.lower().endswith("hips")
+                    or group.name.lower().endswith("spine2")
+                }
+            ),
+        )
+        copy_polo_weights_nearby(
+            export_basemesh,
+            polo_transfer_data,
+            max_distance=0.03,
+            target_group_indices={
+                group.index
+                for group in export_basemesh.vertex_groups
+                if group.name.lower().endswith("spine2")
+            },
+            require_inner_side=False,
+        )
     extras += add_cap(export_basemesh, export_root, eyes_obj, TEX) or []
 children = list(children) + extras
 

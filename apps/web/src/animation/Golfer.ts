@@ -212,6 +212,7 @@ export class Golfer {
             // stay readable against the sunlit turf without lifting the whole scene's ambient.
             material.envMapIntensity = 2.3;
             if (!/buckle/i.test(material.name)) material.metalness = 0;
+            if (/clothes|polo|pants|belt/i.test(material.name)) material.side = THREE.DoubleSide;
             if (material.map) material.map.anisotropy = 8;
             if (material.transparent && /hair|eyebrow|eyelash/i.test(material.name)) {
               // Alpha-tested strands write depth so hair never shows the scalp through itself or sorts behind the face.
