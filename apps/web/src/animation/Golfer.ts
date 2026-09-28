@@ -40,7 +40,7 @@ function characterMaterial(source: THREE.MeshStandardMaterial): THREE.MeshStanda
   } else if (/polo|pants|cap|belt/i.test(name)) {
     physical = new THREE.MeshPhysicalMaterial();
     THREE.MeshStandardMaterial.prototype.copy.call(physical, source);
-    physical.sheen = 0.5;
+    physical.sheen = 0.65;
     physical.sheenRoughness = 0.85;
     physical.sheenColor.set(0xffffff);
     physical.specularIntensity = 0.45;
@@ -158,6 +158,7 @@ interface Placement {
  */
 export class Golfer {
   readonly group = new THREE.Group();
+  onSwingStart?: (type: SwingType, impactInSeconds: number) => void;
   private root: THREE.Object3D;
   private rig: SwingRig;
   private mixer: THREE.AnimationMixer;
@@ -209,7 +210,7 @@ export class Golfer {
           if (material instanceof THREE.MeshStandardMaterial) {
             // Image-based fill is scaled up on the character so the shaded side of the face, arms and the dark polo
             // stay readable against the sunlit turf without lifting the whole scene's ambient.
-            material.envMapIntensity = 1.9;
+            material.envMapIntensity = 2.3;
             if (!/buckle/i.test(material.name)) material.metalness = 0;
             if (material.map) material.map.anisotropy = 8;
             if (material.transparent && /hair|eyebrow|eyelash/i.test(material.name)) {
@@ -304,6 +305,7 @@ export class Golfer {
     action.reset().setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
     action.play();
+    this.onSwingStart?.(type, clip.duration * IMPACT_TIME[type]);
     return new Promise((resolve) => {
       this.pending = { resolve, impactAt: clip.duration * IMPACT_TIME[type], elapsed: 0, fired: false };
     });

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CLUBS } from '@golf/sim';
+import { SurfaceId } from '@golf/course-format';
 import { getGraphicsPreset, type GraphicsPreset } from './GraphicsPreset.js';
 import { CameraController } from './CameraController.js';
 import { Renderer } from '../render/Renderer.js';
@@ -16,6 +17,8 @@ import { GameSession } from '../game/GameSession.js';
 import { UI } from '../ui/UI.js';
 import { AimDrag } from '../input/AimDrag.js';
 import { PowerCharge } from '../input/PowerCharge.js';
+import { ImpactEffects } from '../render/ImpactEffects.js';
+import { ImpactSound } from '../audio/ImpactSound.js';
 import type { ResolvedShot } from '../game/HoleController.js';
 
 const HOLE_COMPLETE_PAUSE_MS = 1800;
@@ -35,6 +38,8 @@ export class App {
   private readonly ui: UI;
   private readonly aimDrag: AimDrag;
   private readonly powerCharge: PowerCharge;
+  private readonly impactEffects = new ImpactEffects();
+  private readonly impactSound = new ImpactSound();
   private readonly preset: GraphicsPreset;
   private readonly query = new URLSearchParams(location.search);
   private renderer: Renderer | undefined;
@@ -67,6 +72,8 @@ export class App {
         void this.hit();
       },
     );
+    window.addEventListener('pointerdown', () => this.impactSound.unlock(), { once: true });
+    window.addEventListener('keydown', () => this.impactSound.unlock(), { once: true });
     this.session.onChange((state) => {
       const ready = state.phase === 'aiming';
       this.powerCharge.enabled = ready;
@@ -134,7 +141,11 @@ export class App {
     this.ball = new BallView(this.environment);
     this.renderer.scene.add(this.ball.group);
     this.golfer = new Golfer(this.renderer.renderer, this.environment);
+    this.golfer.onSwingStart = (_type, impactIn) => {
+      this.impactSound.swoosh(Math.max(0, impactIn - 0.22));
+    };
     this.renderer.scene.add(this.golfer.group);
+    this.renderer.scene.add(this.impactEffects.group);
     this.camera = new CameraController(this.renderer.camera, (x, z) => this.session.course?.sampler.heightAt(x, z) ?? 0);
     this.aimLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: 0xe8fff0, dashSize: 0.6, gapSize: 0.4 }));
     this.renderer.scene.add(this.aimLine);
@@ -197,6 +208,15 @@ export class App {
     const resolved = await this.session.hit(this.golfer, skipAnimation);
     if (!resolved) return;
     this.activeShot = resolved;
+    const start = resolved.trajectory[0];
+    if (start) {
+      const speed = Math.hypot(start.velocity.x, start.velocity.y, start.velocity.z);
+      const surface = this.session.course?.sampler.surfaceAt(start.position.x, start.position.z) ?? SurfaceId.Fairway;
+      const direction = new THREE.Vector3(Math.sin(this.session.aimYaw), 0, -Math.cos(this.session.aimYaw));
+      this.impactEffects.trigger(new THREE.Vector3(start.position.x, start.position.y, start.position.z), direction, surface, speed);
+      const club = CLUBS[this.session.selectedClub] ?? CLUBS.driver;
+      if (club) this.impactSound.impact(club.category, speed);
+    }
     this.ball.start(resolved.trajectory);
     this.camera.beginShot(resolved.trajectory, this.session.aimYaw);
   }
@@ -230,6 +250,7 @@ export class App {
       this.aimDrag.update(dt);
       this.powerCharge.update(now);
       this.golfer?.update(dt);
+      this.impactEffects.update(dt);
       if (this.ball && this.activeShot) {
         this.ball.update(dtMs);
         if (this.ball.playback.done) {

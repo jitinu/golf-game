@@ -371,7 +371,12 @@ export class GrassField {
       const surface = this.course.surfaceMask.surfaceAt(x, z);
       const level = this.blendedCutLevel(x, z, surface);
       // Patch-scale variation: thin/thick density, dry/lush tone and a comb direction that drifts across the course.
-      const density = valueNoise(x, z, 9, 1) * 0.6 + valueNoise(x, z, 2.5, 2) * 0.4;
+      const densityBase = valueNoise(x, z, 9, 1) * 0.6 + valueNoise(x, z, 2.5, 2) * 0.4;
+      const patch9 = valueNoise(x, z, 9, 13) - 0.5;
+      const patch45 = valueNoise(x, z, 45, 14) - 0.5;
+      const density = densityBase * (1 + patch9 * 0.5 + patch45 * 0.5);
+      const heightVariation = 1 + patch9 * 0.3 + patch45 * 0.3;
+      const toneVariation = 1 + (patch9 + patch45) * 0.12;
       const lush = valueNoise(x, z, 14, 3);
       const mown = level < 0.3;
       const rough = level > 0.6;
@@ -380,7 +385,7 @@ export class GrassField {
       const tussock = rough && hash(seed + 7) > 1 - 0.1 * level;
       const spread = 0.8 + hash(seed + 2) * 0.4 + level * (hash(seed + 8) - 0.35) * 0.7;
       const height = grow
-        ? heightForLevel(level) * spread * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1) * (tussock ? 1.5 : 1)
+        ? heightForLevel(level) * spread * heightVariation * (0.85 + density * 0.3) * (ringIndex === 2 ? 0.85 : 1) * (tussock ? 1.5 : 1)
         : 0;
       const width = (0.22 + hash(seed + 3) * 0.28 + ringIndex * 0.12) * (tussock ? 1.4 : 1 + level * 0.15);
       this.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash(seed + 4) * Math.PI * 2);
@@ -393,7 +398,7 @@ export class GrassField {
       const band = Math.floor((x - z) / 8);
       const stripe = ((band % 2) + 2) % 2 === 0 ? 1 : -1;
       const dryness = (hash(seed + 5) * 0.5 + (1 - lush) * 0.5) * (0.4 + level * 0.5);
-      const shade = (0.82 + hash(seed + 6) * 0.26) * (0.9 + lush * 0.2) * (mown ? 1 + stripe * 0.05 : 1);
+      const shade = (0.82 + hash(seed + 6) * 0.26) * (0.9 + lush * 0.2) * toneVariation * (mown ? 1 + stripe * 0.05 : 1);
       tints[index * 3] = (0.66 + dryness * 0.4) * shade;
       tints[index * 3 + 1] = (0.78 + dryness * 0.08) * shade;
       tints[index * 3 + 2] = (0.52 + dryness * 0.1) * shade;

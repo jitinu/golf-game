@@ -46,7 +46,7 @@ export interface CourseFeatures {
   water: Polygon[];
   outOfBounds: Polygon[];
   paths?: Spline[];
-  trees: { position: Vec3; kind: string; scale: number; rotation: number }[];
+  trees: { position: Vec3; kind: string; scale: number; rotation: number; stretch?: number }[];
 }
 
 export interface Spline {

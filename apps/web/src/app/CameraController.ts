@@ -31,6 +31,9 @@ export class CameraController {
   private readonly lookDirection = new THREE.Vector3(0, 0, -1);
   private readonly scratch = new THREE.Vector3();
   private readonly ballVector = new THREE.Vector3();
+  private readonly launchAimPosition = new THREE.Vector3();
+  private readonly launchAimTarget = new THREE.Vector3();
+  private launchElapsed = 0;
   private plan: ShotPlan | undefined;
 
   constructor(
@@ -66,8 +69,10 @@ export class CameraController {
     const travel = end.clone().sub(start).setY(0);
     const aim = travel.lengthSq() > 1 ? travel.normalize() : new THREE.Vector3(Math.sin(aimYaw), 0, -Math.cos(aimYaw));
     this.plan = { start, landing, end, aim, right: new THREE.Vector3().crossVectors(aim, UP).normalize(), carry: landing.distanceTo(start), apex: apex - start.y, phase: 'launch' };
-    this.compute(first.position, end, aimYaw);
-    this.snap();
+    this.computeAimFrame(first.position, aimYaw);
+    this.launchAimPosition.copy(this.desired);
+    this.launchAimTarget.copy(this.target);
+    this.launchElapsed = 0;
   }
 
   endShot(): void {
@@ -75,6 +80,7 @@ export class CameraController {
   }
 
   update(ball: Vec3, pin: Vec3, aimYaw: number, dtSeconds: number): void {
+    if (this.mode === 'follow' && this.plan?.phase === 'launch') this.launchElapsed += Math.max(0, dtSeconds);
     if (this.mode === 'aim' && holeDistance(ball, pin) < GREEN_RADIUS_M) this.mode = 'green';
     const cut = this.compute(ball, pin, aimYaw);
     if (cut) {
@@ -108,11 +114,7 @@ export class CameraController {
     const ballVector = this.ballVector.set(ball.x, ball.y, ball.z);
     const pinVector = new THREE.Vector3(pin.x, pin.y, pin.z);
     if (this.mode === 'aim') {
-      const right = new THREE.Vector3(-aim.z, 0, aim.x);
-      // Low broadcast angle: just above hip height, off the golfer's trail shoulder, looking down the line so the
-      // fairway, hazards and tree line give the frame depth while the golfer stays the foreground focal point.
-      this.desired.copy(ballVector).addScaledVector(aim, -4.9).addScaledVector(right, 2.8).add(new THREE.Vector3(0, 1.4, 0));
-      this.target.copy(ballVector).addScaledVector(aim, 26).addScaledVector(right, 1.6).add(new THREE.Vector3(0, 0.4, 0));
+      this.computeAimFrame(ball, aimYaw);
       return false;
     }
     if (this.mode === 'green') {
@@ -145,8 +147,12 @@ export class CameraController {
     if (plan.phase === 'launch') {
       // Tee camera: low and behind, drifting forward and rising slightly as the ball climbs.
       const push = Math.min(10, progress * 16);
-      this.desired.copy(plan.start).addScaledVector(plan.aim, -6 + push).addScaledVector(plan.right, -1.4).add(new THREE.Vector3(0, 2 + height * 0.12, 0));
-      this.target.copy(ballVector);
+      const launchPosition = this.scratch.copy(plan.start).addScaledVector(plan.aim, -6 + push).addScaledVector(plan.right, -1.4).add(new THREE.Vector3(0, 2 + height * 0.12, 0));
+      const launchTarget = ballVector;
+      const positionBlend = THREE.MathUtils.smoothstep(this.launchElapsed / 0.35, 0, 1);
+      const targetBlend = THREE.MathUtils.smoothstep(this.launchElapsed / 0.3, 0, 1);
+      this.desired.copy(this.launchAimPosition).lerp(launchPosition, positionBlend);
+      this.target.copy(this.launchAimTarget).lerp(launchTarget, targetBlend);
     } else {
       // Landing camera: ahead of the touchdown point, off to the side, looking back down the line at the incoming ball.
       const rollAhead = Math.max(0, ballVector.clone().sub(plan.landing).setY(0).dot(plan.aim) - 14);
@@ -154,5 +160,13 @@ export class CameraController {
       this.target.copy(ballVector).lerp(plan.landing, height > 2 ? 0.35 : 0);
     }
     return cut;
+  }
+
+  private computeAimFrame(ball: Vec3, aimYaw: number): void {
+    const aim = this.scratch.set(Math.sin(aimYaw), 0, -Math.cos(aimYaw));
+    const right = new THREE.Vector3(-aim.z, 0, aim.x);
+    const ballVector = this.ballVector.set(ball.x, ball.y, ball.z);
+    this.desired.copy(ballVector).addScaledVector(aim, -4.9).addScaledVector(right, 2.8).add(new THREE.Vector3(0, 1.4, 0));
+    this.target.copy(ballVector).addScaledVector(aim, 26).addScaledVector(right, 1.6).add(new THREE.Vector3(0, 0.4, 0));
   }
 }

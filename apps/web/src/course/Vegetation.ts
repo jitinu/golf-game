@@ -124,7 +124,7 @@ interface Variant {
   width: number;
   height: number;
   /** Trees using this variant: full transform (scale, rotation, position). */
-  members: { matrix: THREE.Matrix4; position: THREE.Vector3; scale: number; tint: THREE.Color }[];
+  members: { matrix: THREE.Matrix4; position: THREE.Vector3; scale: number; stretch: number; tint: THREE.Color }[];
 }
 
 function hash(value: number): number {
@@ -245,14 +245,15 @@ export class Vegetation {
       buckets.set(key, bucket);
       const position = new THREE.Vector3(tree.position.x, course.sampler.heightAt(tree.position.x, tree.position.z) - 0.05, tree.position.z);
       const scale = tree.scale;
-      const matrix = new THREE.Matrix4().compose(position, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), tree.rotation), new THREE.Vector3(scale, scale, scale));
+      const stretch = tree.stretch ?? 1;
+      const matrix = new THREE.Matrix4().compose(position, new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), tree.rotation), new THREE.Vector3(scale, scale * stretch, scale));
       // Per-tree foliage tone around the species centre: lush/dark through yellow-green so neighbours of the same
       // variant never match and conifers stay darker than birches.
       const foliage = kind.foliage ?? { warmth: 0.5, brightness: 1 };
       const warmth = THREE.MathUtils.clamp(foliage.warmth + (hash(index * 2.17) - 0.5) * 0.5, 0, 1);
       const brightness = foliage.brightness * (0.8 + hash(index * 3.91) * 0.34);
       const tint = new THREE.Color((0.84 + warmth * 0.3) * brightness, (0.9 + warmth * 0.1) * brightness, (0.78 + (1 - warmth) * 0.22) * brightness);
-      bucket.members.push({ matrix, position, scale, tint });
+      bucket.members.push({ matrix, position, scale, stretch, tint });
     });
 
     for (const [key, bucket] of buckets) {
@@ -390,7 +391,7 @@ export class Vegetation {
           variant.midLeaves.setColorAt(mid, member.tint);
           mid += 1;
         } else {
-          cardScale.set(variant.width * member.scale, variant.height * member.scale, 1);
+          cardScale.set(variant.width * member.scale, variant.height * member.scale * member.stretch, 1);
           cardMatrix.compose(member.position, rotation.setFromRotationMatrix(member.matrix), cardScale);
           variant.cards.setMatrixAt(far, cardMatrix);
           far += 1;

@@ -469,6 +469,23 @@ export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
   const waterKinds = scatter.waterKinds ?? [];
   const waterDistance = scatter.waterDistance ?? 12;
   const trees: CourseFeatures['trees'] = [];
+  const minSpacing = scatter.spacing * 0.7;
+  const accepted = new Map<string, { x: number; z: number }[]>();
+  const canPlace = (x: number, z: number): boolean => {
+    const cellX = Math.floor(x / minSpacing);
+    const cellZ = Math.floor(z / minSpacing);
+    for (let dz = -1; dz <= 1; dz += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        const neighbours = accepted.get(`${cellX + dx}:${cellZ + dz}`) ?? [];
+        if (neighbours.some((point) => Math.hypot(point.x - x, point.z - z) < minSpacing)) return false;
+      }
+    }
+    const key = `${cellX}:${cellZ}`;
+    const points = accepted.get(key) ?? [];
+    points.push({ x, z });
+    accepted.set(key, points);
+    return true;
+  };
   const columns = Math.floor(source.map.width / scatter.spacing);
   const rows = Math.floor(source.map.depth / scatter.spacing);
   for (let row = 0; row < rows; row += 1) {
@@ -487,10 +504,22 @@ export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
       if (distance < scatter.minPlayDistance || distance > scatter.maxPlayDistance) continue;
       const nearWater = waterKinds.length > 0 && source.features.water.some((polygon) => polygonDistance(x, z, polygon) < waterDistance);
       const kind = pickKind(nearWater ? waterKinds : scatter.kinds, hash2(scatter.seed + 3, column, row));
-      // Skew toward mid-size with occasional giants so the canopy line breaks up.
+      if (!canPlace(x, z)) continue;
+      // Skew toward mid-size with occasional giants so the canopy line breaks up. Grove noise biases
+      // neighbouring candidates toward the same scale, creating coherent canopy groups.
       const t = hash2(scatter.seed + 4, column, row);
-      const scale = kind.scale[0] + (kind.scale[1] - kind.scale[0]) * (t < 0.85 ? t / 0.85 * 0.8 : 0.8 + ((t - 0.85) / 0.15) * 0.2);
-      trees.push({ position: { x, y: 0, z }, kind: kind.kind, scale: Math.round(scale * 100) / 100, rotation: Math.round(hash2(scatter.seed + 5, column, row) * Math.PI * 2 * 100) / 100 });
+      const local = t < 0.85 ? t / 0.85 * 0.8 : 0.8 + ((t - 0.85) / 0.15) * 0.2;
+      const baseScale = kind.scale[0] + (kind.scale[1] - kind.scale[0]) * local;
+      const groveBias = 0.86 + grove * 0.28;
+      const scale = Math.min(1.4, Math.max(0.72, baseScale * groveBias));
+      const stretch = 0.9 + hash2(scatter.seed + 6, column, row) * 0.3;
+      trees.push({
+        position: { x, y: 0, z },
+        kind: kind.kind,
+        scale: Math.round(scale * 100) / 100,
+        stretch: Math.round(stretch * 100) / 100,
+        rotation: Math.round(hash2(scatter.seed + 5, column, row) * Math.PI * 2 * 100) / 100,
+      });
     }
   }
   return trees;

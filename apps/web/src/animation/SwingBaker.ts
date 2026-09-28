@@ -9,7 +9,9 @@ export type ClipName = SwingType | 'celebrate';
 export const IMPACT_TIME: Record<SwingType, number> = { swing_full: 0.62, swing_chip: 0.6, putt: 0.55 };
 export const CLIP_DURATION: Record<ClipName, number> = { swing_full: 1.4, swing_chip: 1.1, putt: 1.0, celebrate: 1.4 };
 const AMPLITUDE: Record<SwingType, number> = { swing_full: 1, swing_chip: 0.45, putt: 0.16 };
-const FRAMES_PER_SECOND = 40;
+const FRAMES_PER_SECOND = 60;
+/** Club speed at impact relative to the downswing's average; keeps the Hermite downswing monotonic (must stay ≤ 3). */
+const IMPACT_SPEED_RATIO = 2.6;
 
 /** Distance from the body centre to the ball for a club, along the character's +Z. */
 export function stanceDistance(spec: ClubSpec): number {
@@ -24,7 +26,6 @@ const smooth = (u: number): number => {
   const t = THREE.MathUtils.clamp(u, 0, 1);
   return t * t * (3 - 2 * t);
 };
-const easeIn = (u: number, power: number): number => Math.pow(THREE.MathUtils.clamp(u, 0, 1), power);
 const easeOut = (u: number, power: number): number => 1 - Math.pow(1 - THREE.MathUtils.clamp(u, 0, 1), power);
 
 interface Side {
@@ -55,6 +56,13 @@ interface BodyPose {
   leadKneeIn: number;
 }
 
+/** Where each foot is planted at address: ankle position and sole orientation in character space. */
+interface PlantedFoot {
+  ankle: THREE.Vector3;
+  orientation: THREE.Quaternion;
+}
+type PlantedFeet = Record<Side['name'], PlantedFoot>;
+
 interface AddressFrame {
   butt: THREE.Vector3;
   shaft: THREE.Vector3;
@@ -63,6 +71,7 @@ interface AddressFrame {
   pivot: THREE.Vector3;
   normal: THREE.Vector3;
   tilt: number;
+  feet: PlantedFeet | undefined;
 }
 
 interface Swing {
@@ -76,13 +85,19 @@ interface Swing {
   amplitude: number;
 }
 
-function poseBody(rig: SwingRig, pose: BodyPose): void {
+function poseBody(rig: SwingRig, pose: BodyPose, feet?: PlantedFeet): void {
   rig.offsetPosition('Hips', pose.hipsShift);
   rig.applyDeltaEuler('Hips', pose.hipsTilt, pose.hipsYaw, 0);
   const spineBones = ['Spine', 'Spine1', 'Spine2'].filter((name) => rig.bone(name));
   const share = spineBones.length > 0 ? 1 / spineBones.length : 0;
   for (const name of spineBones) {
     rig.applyDeltaEuler(name, pose.spineTilt * share, pose.spineYaw * share, pose.spineBend * share);
+  }
+  if (feet) {
+    rig.update();
+    for (const side of SIDES) plantFoot(rig, side, feet[side.name], pose);
+    rig.update();
+    return;
   }
   const thigh = -pose.kneeFlex * 0.55;
   const shin = pose.kneeFlex;
@@ -101,6 +116,47 @@ function poseBody(rig: SwingRig, pose: BodyPose): void {
     rig.applyDeltaEuler(`${side.name}Foot`, -(thighAngle + shinAngle) - pose.hipsTilt + heel, 0, -width - roll);
   }
   rig.update();
+}
+
+/** Foot length used to swing the ankle about the toe when the heel lifts. */
+const FOOT_LENGTH = 0.2;
+
+/**
+ * Two-bone leg IK: keeps the ankle where it was planted at address while the hips shift, sit and rise, so the feet
+ * never slide. Knees point toward the ball, kicking inward with the swing; the trail foot pivots about its toe as the
+ * heel peels off in the follow-through.
+ */
+function plantFoot(rig: SwingRig, side: Side, planted: PlantedFoot, pose: BodyPose): void {
+  const upper = rig.bone(`${side.name}UpLeg`);
+  const lower = rig.bone(`${side.name}Leg`);
+  const foot = rig.bone(`${side.name}Foot`);
+  if (!upper || !lower || !foot) return;
+  const lead = side.name === 'Left';
+  const heel = lead ? 0 : 0.7 * pose.trailHeelLift;
+  const target = planted.ankle
+    .clone()
+    .add(new THREE.Vector3(0, FOOT_LENGTH * Math.sin(heel), FOOT_LENGTH * (1 - Math.cos(heel))));
+  const kneeIn = lead ? pose.leadKneeIn : pose.trailKneeIn;
+  const hip = rig.positionOf(upper);
+  const l1 = rig.restLength(`${side.name}UpLeg`, `${side.name}Leg`);
+  const l2 = rig.restLength(`${side.name}Leg`, `${side.name}Foot`);
+  const toAnkle = target.clone().sub(hip);
+  const distance = THREE.MathUtils.clamp(toAnkle.length(), Math.abs(l1 - l2) + 0.01, (l1 + l2) * 0.995);
+  const u = toAnkle.normalize();
+  const pole = Z.clone().addScaledVector(X, -side.sign * 0.6 * kneeIn);
+  pole.addScaledVector(u, -pole.dot(u));
+  if (pole.lengthSq() < 1e-4) pole.set(0, 0, 1).addScaledVector(u, -u.z);
+  pole.normalize();
+  const cosA = THREE.MathUtils.clamp((l1 * l1 + distance * distance - l2 * l2) / (2 * l1 * distance), -1, 1);
+  const angle = Math.acos(cosA);
+  const knee = hip.clone().addScaledVector(u, l1 * Math.cos(angle)).addScaledVector(pole, l1 * Math.sin(angle));
+  rig.rotate(upper, new THREE.Quaternion().setFromUnitVectors(rig.axisOf(upper, lower), knee.clone().sub(hip).normalize()));
+  rig.update();
+  const kneeNow = rig.positionOf(lower);
+  rig.rotate(lower, new THREE.Quaternion().setFromUnitVectors(rig.axisOf(lower, foot), target.clone().sub(kneeNow).normalize()));
+  rig.update();
+  const lift = new THREE.Quaternion().setFromAxisAngle(X, heel);
+  rig.setOrientation(foot, lift.multiply(planted.orientation));
 }
 
 interface ArmSolution {
@@ -255,7 +311,20 @@ function solveAddress(rig: SwingRig, spec: ClubSpec, ball: THREE.Vector3): Addre
   }
   const toBall = ball.clone().sub(pivot).normalize();
   const normal = new THREE.Vector3().crossVectors(toBall, X).normalize();
-  return { butt, shaft, clubX, clubQuaternion, pivot, normal, tilt };
+  const feet = plantedFeet(rig);
+  return { butt, shaft, clubX, clubQuaternion, pivot, normal, tilt, feet };
+}
+
+/** Records where the address pose put each ankle and how the sole sits, for the leg IK to hold through the swing. */
+function plantedFeet(rig: SwingRig): PlantedFeet | undefined {
+  const record = (side: Side): PlantedFoot | undefined => {
+    const foot = rig.bone(`${side.name}Foot`);
+    if (!foot || !rig.bone(`${side.name}UpLeg`) || !rig.bone(`${side.name}Leg`)) return undefined;
+    return { ankle: rig.positionOf(foot), orientation: rig.quaternionOf(foot) };
+  };
+  const left = record(SIDES[0]!);
+  const right = record(SIDES[1]!);
+  return left && right ? { Left: left, Right: right } : undefined;
 }
 
 function buildSwing(type: SwingType): Swing {
@@ -266,14 +335,26 @@ function buildSwing(type: SwingType): Swing {
   const phiTop = -2.85 * amplitude;
   const phiEnd = 2.55 * amplitude;
   const hinge = 1.75 * Math.pow(amplitude, 1.2);
+  // One C1-continuous arc: the downswing is a Hermite segment leaving the top at rest and arriving at impact at
+  // IMPACT_SPEED_RATIO × its average speed; the follow-through carries exactly that speed and decays
+  // exponentially into a held finish, so nothing hitches at the top or at the ball.
+  const downswing = impactTime - topTime;
+  const impactVelocity = (IMPACT_SPEED_RATIO * -phiTop) / downswing;
+  const decay = (impactVelocity * (1 - impactTime)) / phiEnd;
+  const settle = 1 - Math.exp(-decay);
   const phi = (t: number): number => {
     if (t < topTime) {
       // Slow, gathering takeaway with a brief settle at the top before transition.
       return phiTop * smooth(easeOut(t / topTime, 1.25));
     }
-    if (t < impactTime) return phiTop * (1 - easeIn((t - topTime) / (impactTime - topTime), 2.4));
-    // The club keeps accelerating past the ball, then decelerates into a held finish.
-    return phiEnd * easeOut((t - impactTime) / (1 - impactTime), 2.9);
+    if (t < impactTime) {
+      const s = (t - topTime) / downswing;
+      const h01 = s * s * (3 - 2 * s);
+      const h11 = s * s * (s - 1);
+      return phiTop * (1 - h01) + IMPACT_SPEED_RATIO * -phiTop * h11;
+    }
+    const s = (t - impactTime) / (1 - impactTime);
+    return (phiEnd * (1 - Math.exp(-decay * s))) / settle;
   };
   return { phi, topTime, impactTime, phiTop, phiEnd, hinge, amplitude };
 }
@@ -322,12 +403,11 @@ interface ClubFrame {
 function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   const phi = swing.phi(t);
   const fraction = phi < 0 ? -phi / -swing.phiTop : phi / swing.phiEnd;
-  // Wrists set progressively going back, then hold the lag through the downswing and release late into impact.
+  // Wrists set progressively going back, hold the lag through the downswing and release late into impact; the
+  // release continues at the same rate past the ball and re-hinges into the finish.
   const lagging = t > swing.topTime && phi < 0;
-  const hinge =
-    phi < 0
-      ? -swing.hinge * Math.pow(fraction, lagging ? 0.55 : 1.4)
-      : swing.hinge * Math.pow(fraction, 1.3) * 0.9;
+  const held = 1 - Math.pow(1 - fraction, 2.5);
+  const hinge = phi < 0 ? -swing.hinge * (lagging ? held : Math.pow(fraction, 1.4)) : swing.hinge * held * 0.9;
   const armRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi);
   const clubRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi + hinge);
   const radiusScale = phi < 0 ? 1 - 0.1 * fraction * fraction : 1 - 0.05 * fraction * fraction;
@@ -407,7 +487,7 @@ export function bakeSwing(context: BakeContext, type: SwingType): THREE.Animatio
   for (let index = 0; index <= frames; index += 1) {
     const t = index / frames;
     rig.reset();
-    poseBody(rig, swingBody(spec, address, swing, t));
+    poseBody(rig, swingBody(spec, address, swing, t), address.feet);
     const frame = clubFrame(address, swing, t);
     placeHands(rig, frame);
     const release = smooth((t - swing.impactTime - 0.06) / 0.3);
