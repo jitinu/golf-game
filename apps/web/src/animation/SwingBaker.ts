@@ -87,11 +87,26 @@ interface Swing {
 
 function poseBody(rig: SwingRig, pose: BodyPose, feet?: PlantedFeet): void {
   rig.offsetPosition('Hips', pose.hipsShift);
-  rig.applyDeltaEuler('Hips', pose.hipsTilt, pose.hipsYaw, 0);
+  // The torso turns about its own tilted axis (yaw first, then the forward tilt), so the shoulders stay centred over
+  // the spine instead of swinging around a vertical axis through the hips.
+  const hips = rig.bone('Hips');
+  if (hips) {
+    const torsoTilt = pose.hipsTilt + pose.spineTilt;
+    const spineAxis = new THREE.Vector3(0, Math.cos(torsoTilt), Math.sin(torsoTilt));
+    const delta = new THREE.Quaternion()
+      .setFromAxisAngle(spineAxis, pose.hipsYaw)
+      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(pose.hipsTilt, 0, 0)));
+    rig.applyDelta(hips, delta);
+  }
   const spineBones = ['Spine', 'Spine1', 'Spine2'].filter((name) => rig.bone(name));
   const share = spineBones.length > 0 ? 1 / spineBones.length : 0;
   for (const name of spineBones) {
-    rig.applyDeltaEuler(name, pose.spineTilt * share, pose.spineYaw * share, pose.spineBend * share);
+    const bone = rig.bone(name);
+    if (!bone) continue;
+    rig.applyDelta(
+      bone,
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(pose.spineTilt * share, pose.spineYaw * share, pose.spineBend * share, 'XYZ')),
+    );
   }
   if (feet) {
     rig.update();
@@ -172,8 +187,8 @@ function solveArm(rig: SwingRig, side: Side, wrist: THREE.Vector3, palmNormal: T
   const clavicle = rig.bone(`${side.name}Shoulder`);
   const shoulder = rig.positionOf(upper);
   if (clavicle) {
-    const raise = THREE.MathUtils.clamp((wrist.y - shoulder.y) / 0.6, 0, 1) * 0.3;
-    const forward = THREE.MathUtils.clamp((wrist.z - shoulder.z) / 0.6, -0.5, 1) * 0.12;
+    const raise = THREE.MathUtils.clamp((wrist.y - shoulder.y) / 0.6, 0, 1) * 0.14;
+    const forward = THREE.MathUtils.clamp((wrist.z - shoulder.z) / 0.6, -0.5, 1) * 0.1;
     rig.applyDelta(clavicle, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -forward * side.sign, raise * side.sign)));
     rig.update();
     rig.positionOf(upper, shoulder);
@@ -410,8 +425,14 @@ function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   const hinge = phi < 0 ? -swing.hinge * (lagging ? held : Math.pow(fraction, 1.4)) : swing.hinge * held * 0.9;
   const armRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi);
   const clubRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi + hinge);
-  const radiusScale = phi < 0 ? 1 - 0.1 * fraction * fraction : 1 - 0.05 * fraction * fraction;
-  const butt = address.butt.clone().sub(address.pivot).multiplyScalar(radiusScale).applyQuaternion(armRotation).add(address.pivot);
+  const radiusScale = phi < 0 ? 1 - 0.08 * fraction * fraction : 1 - 0.05 * fraction * fraction;
+  // At address the hands hang below the shoulder plane; going back they rise onto it (hands over the trail shoulder
+  // at the top) and finish just above it, rather than being carried around below the plane the whole way.
+  const armVector = address.butt.clone().sub(address.pivot);
+  const offPlane = armVector.dot(address.normal);
+  const lift = phi < 0 ? 1 - 1.05 * Math.pow(fraction, 1.3) : 1 - 1.2 * Math.pow(fraction, 1.2);
+  const inPlane = armVector.clone().addScaledVector(address.normal, -offPlane).multiplyScalar(radiusScale).applyQuaternion(armRotation);
+  const butt = inPlane.addScaledVector(address.normal, offPlane * lift).add(address.pivot);
   return {
     butt,
     shaft: address.shaft.clone().applyQuaternion(clubRotation),
