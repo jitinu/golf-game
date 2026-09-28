@@ -222,6 +222,7 @@ def cull_mesh_under_clothing(
     unprotected_groups = unprotected_groups or set()
     distance_only_groups = distance_only_groups or set()
     distance_only_margin = margin if distance_only_margin is None else distance_only_margin
+    query_distance = max(margin, distance_only_margin)
     hem_boundary_points = hem_boundary_points or []
     covered = []
     for vertex in mesh_obj.data.vertices:
@@ -237,7 +238,7 @@ def cull_mesh_under_clothing(
         for clothing, clothing_world in evaluated_clothing:
             clothing_local = clothing_world.inverted() @ world_vertex
             hit, nearest_local, normal_local, _ = clothing.closest_point_on_mesh(
-                clothing_local, distance=margin, depsgraph=depsgraph
+                clothing_local, distance=query_distance, depsgraph=depsgraph
             )
             if not hit:
                 continue
@@ -710,28 +711,29 @@ if eyes_obj is not None:
         copy_polo_weights_nearby(
             export_basemesh,
             polo_transfer_data,
-            max_distance=0.05,
+            max_distance=0.025,
             target_group_indices=(
                 {
                     group.index
                     for group in export_basemesh.vertex_groups
-                    if (
-                        "shoulder" in group.name.lower()
-                        or any(
-                            group.name.lower().endswith(suffix)
-                            for suffix in (
-                                "neck",
-                                "leftarm",
-                                "rightarm",
-                                "hips",
-                                "spine",
-                                "spine1",
-                                "spine2",
-                            )
-                        )
-                    )
+                    if group.name.lower().endswith("neck")
+                    or "shoulder" in group.name.lower()
+                    or group.name.lower().endswith("leftarm")
+                    or group.name.lower().endswith("rightarm")
+                    or group.name.lower().endswith("hips")
+                    or group.name.lower().endswith("spine2")
                 }
             ),
+        )
+        copy_polo_weights_nearby(
+            export_basemesh,
+            polo_transfer_data,
+            max_distance=0.03,
+            target_group_indices={
+                group.index
+                for group in export_basemesh.vertex_groups
+                if group.name.lower().endswith("spine2")
+            },
             require_inner_side=False,
         )
     extras += add_cap(export_basemesh, export_root, eyes_obj, TEX) or []

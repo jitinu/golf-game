@@ -254,8 +254,16 @@ function solveArm(
   const toWrist = wrist.clone().sub(shoulder);
   const distance = THREE.MathUtils.clamp(toWrist.length(), Math.abs(l1 - l2) + 0.01, (l1 + l2) * 0.995);
   const u = toWrist.normalize();
-  const pole = side.pole.clone().addScaledVector(u, -side.pole.dot(u));
-  if (pole.lengthSq() < 1e-4) pole.set(0, 0, -1).addScaledVector(u, u.z);
+  // Elbows hang below the shoulder–wrist line; as the hands rise above the shoulders the elbow swings in front of the
+  // chest (folded arm at the finish) rather than flipping behind the back.
+  const chest = rig.bone('Spine2');
+  const chestForward = chest
+    ? Z.clone().applyQuaternion(rig.quaternionOf(chest).multiply(rig.restWorld(chest).clone().invert()))
+    : Z.clone();
+  const raised = THREE.MathUtils.clamp((wrist.y - shoulder.y) / 0.25, 0, 1);
+  const pole = side.pole.clone().addScaledVector(chestForward, 0.9 * raised);
+  pole.addScaledVector(u, -pole.dot(u));
+  if (pole.lengthSq() < 1e-4) pole.copy(chestForward).addScaledVector(u, -chestForward.dot(u));
   pole.normalize();
   const cosA = THREE.MathUtils.clamp((l1 * l1 + distance * distance - l2 * l2) / (2 * l1 * distance), -1, 1);
   const angle = Math.acos(cosA);
@@ -505,20 +513,20 @@ function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   // release continues at the same rate past the ball and re-hinges into the finish.
   const lagging = t > swing.topTime && phi < 0;
   const held = 1 - Math.pow(1 - fraction, 2.5);
-  const hinge = phi < 0 ? -swing.hinge * (lagging ? held : Math.pow(fraction, 1.4)) : swing.hinge * held * 0.9;
+  const hinge = phi < 0 ? -swing.hinge * (lagging ? held : Math.pow(fraction, 1.4)) : swing.hinge * 1.45 * Math.pow(fraction, 1.6);
   const armRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi);
   const clubRotation = new THREE.Quaternion().setFromAxisAngle(address.normal, phi + hinge);
-  const radiusScale = phi < 0 ? 1 + 0.08 * fraction * fraction : 1 - 0.1 * fraction * fraction;
+  const radiusScale = phi < 0 ? 1 + 0.08 * fraction * fraction : 1 - 0.4 * fraction * fraction;
   // At address the hands hang below the shoulder plane; going back they rise toward it (hands beside the trail
   // shoulder at the top, not over the head) and in the finish they fold behind the head, below the plane.
   const armVector = address.butt.clone().sub(address.pivot);
   const offPlane = armVector.dot(address.normal);
-  const lift = phi < 0 ? 1 : 1 + 0.18 * Math.pow(fraction, 1.2);
+  const lift = phi < 0 ? 1 : 1 + 0.1 * Math.pow(fraction, 1.2);
   const inPlane = armVector.clone().addScaledVector(address.normal, -offPlane).multiplyScalar(radiusScale).applyQuaternion(armRotation);
   const butt = inPlane.addScaledVector(address.normal, offPlane * lift).add(address.pivot);
   // The hands ride up over the trail shoulder at the top and over the lead shoulder in the finish, keeping the
   // folded arm at a right angle rather than collapsing onto the shoulder.
-  butt.y += phi < 0 ? 0.11 * Math.pow(fraction, 1.5) : 0.08 * Math.pow(fraction, 2);
+  butt.y += phi < 0 ? 0.11 * Math.pow(fraction, 1.5) : 0.2 * Math.pow(fraction, 2);
   return {
     butt,
     shaft: address.shaft.clone().applyQuaternion(clubRotation),
