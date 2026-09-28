@@ -209,8 +209,6 @@ def cull_mesh_under_clothing(
     distance_only_margin=None,
     hem_boundary_points=None,
     hem_guard=0.06,
-    max_z=None,
-    min_z=None,
     label="mesh",
 ):
     """Remove mesh faces fully enclosed by evaluated clothing meshes."""
@@ -263,8 +261,6 @@ def cull_mesh_under_clothing(
     faces_to_delete = [
         face for face in bm.faces
         if all(covered[vertex.index] for vertex in face.verts)
-        and (max_z is None or all(vertex.co.z < max_z for vertex in face.verts))
-        or (min_z is not None and all(vertex.co.z > min_z for vertex in face.verts))
     ]
     deleted_count = len(faces_to_delete)
     kept_count = len(bm.faces) - deleted_count
@@ -413,6 +409,21 @@ def copy_polo_weights_nearby(
         copied += 1
     print(f"{mesh_obj.name} polo weight transfer: copied {copied} vertices")
     return copied
+
+
+def ensure_polo_vertex_groups(mesh_obj, transfer_data):
+    """Create the polo's deform groups on generated rigid clothing meshes."""
+    if transfer_data is None:
+        return
+    _, polo_weights, _ = transfer_data
+    names = {
+        name
+        for weights in polo_weights
+        for name, _ in weights
+    }
+    existing = {group.name for group in mesh_obj.vertex_groups}
+    for name in sorted(names - existing):
+        mesh_obj.vertex_groups.new(name=name)
 
 
 def push_vertices_under_polo(mesh_obj, transfer_data, max_distance=0.05, amount=0.012):
@@ -671,7 +682,16 @@ extras = []
 if eyes_obj is not None:
     facing = facing_sign(export_basemesh, eyes_obj)
     if pants_obj is not None:
-        extras += add_belt(pants_obj, export_root, facing, TEX) or []
+        belt_parts = add_belt(pants_obj, export_root, facing, TEX) or []
+        extras += belt_parts
+        for belt_part in belt_parts:
+            ensure_polo_vertex_groups(belt_part, polo_transfer_data)
+            copy_polo_weights_nearby(
+                belt_part,
+                polo_transfer_data,
+                max_distance=0.08,
+                require_inner_side=False,
+            )
         cull_pants_clothing = [culling_polo] if culling_polo is not None else []
         cull_mesh_under_clothing(
             pants_obj,
