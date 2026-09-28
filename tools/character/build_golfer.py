@@ -710,29 +710,28 @@ if eyes_obj is not None:
         copy_polo_weights_nearby(
             export_basemesh,
             polo_transfer_data,
-            max_distance=0.025,
+            max_distance=0.05,
             target_group_indices=(
                 {
                     group.index
                     for group in export_basemesh.vertex_groups
-                    if group.name.lower().endswith("neck")
-                    or "shoulder" in group.name.lower()
-                    or group.name.lower().endswith("leftarm")
-                    or group.name.lower().endswith("rightarm")
-                    or group.name.lower().endswith("hips")
-                    or group.name.lower().endswith("spine2")
+                    if (
+                        "shoulder" in group.name.lower()
+                        or any(
+                            group.name.lower().endswith(suffix)
+                            for suffix in (
+                                "neck",
+                                "leftarm",
+                                "rightarm",
+                                "hips",
+                                "spine",
+                                "spine1",
+                                "spine2",
+                            )
+                        )
+                    )
                 }
             ),
-        )
-        copy_polo_weights_nearby(
-            export_basemesh,
-            polo_transfer_data,
-            max_distance=0.03,
-            target_group_indices={
-                group.index
-                for group in export_basemesh.vertex_groups
-                if group.name.lower().endswith("spine2")
-            },
             require_inner_side=False,
         )
     extras += add_cap(export_basemesh, export_root, eyes_obj, TEX) or []

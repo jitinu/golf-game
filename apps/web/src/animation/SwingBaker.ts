@@ -431,7 +431,7 @@ function buildSwing(type: SwingType): Swing {
   // Tour tempo is roughly 3:1 backswing to downswing; the short game keeps a steadier, more even rhythm.
   const topTime = impactTime * (type === 'swing_full' ? 0.72 : 0.64);
   const phiTop = -2.7 * amplitude;
-  const phiEnd = 2.3 * amplitude;
+  const phiEnd = (type === 'swing_full' ? 1.9 : 2.0) * amplitude;
   const hinge = 1.85 * Math.pow(amplitude, 1.2);
   // One C1-continuous arc: the downswing is a Hermite segment leaving the top at rest and arriving at impact at
   // IMPACT_SPEED_RATIO × its average speed; the follow-through carries exactly that speed and decays
@@ -518,7 +518,7 @@ function clubFrame(address: AddressFrame, swing: Swing, t: number): ClubFrame {
   const butt = inPlane.addScaledVector(address.normal, offPlane * lift).add(address.pivot);
   // The hands ride up over the trail shoulder at the top and over the lead shoulder in the finish, keeping the
   // folded arm at a right angle rather than collapsing onto the shoulder.
-  butt.y += phi < 0 ? 0.11 * Math.pow(fraction, 1.5) : 0.12 * Math.pow(fraction, 2);
+  butt.y += phi < 0 ? 0.11 * Math.pow(fraction, 1.5) : 0.08 * Math.pow(fraction, 2);
   return {
     butt,
     shaft: address.shaft.clone().applyQuaternion(clubRotation),
