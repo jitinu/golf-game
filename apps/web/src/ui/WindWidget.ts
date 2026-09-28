@@ -24,7 +24,7 @@ export class WindWidget {
     text.className = 'wind-text';
     const title = document.createElement('div');
     title.className = 'wind-title';
-    title.textContent = 'Wind';
+    title.textContent = 'WIND';
     this.speed = document.createElement('div');
     this.speed.className = 'wind-speed';
     this.label = document.createElement('div');
@@ -44,7 +44,7 @@ export class WindWidget {
     const relative = Math.atan2(across, along);
     this.arrow.style.transform = `rotate(${relative}rad)`;
     this.arrow.style.opacity = speed < 0.3 ? '0.35' : '1';
-    this.speed.textContent = `${speed.toFixed(1)} m/s`;
+    this.speed.innerHTML = `${speed.toFixed(1)} <span class="wind-unit">m/s</span>`;
     this.label.textContent = describe(along, across, speed);
     this.root.classList.toggle('wind-strong', speed > 4.5);
   }

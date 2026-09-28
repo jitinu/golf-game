@@ -33,8 +33,22 @@ export class Hud {
 
   update(state: GameState, courseName: string): void {
     const club = CLUBS[state.selectedClub];
-    this.info.innerHTML = `<strong>${courseName} · Hole ${state.hole}</strong><div class="hud-grid"><span>Par ${state.par}</span><span>Stroke ${state.stroke}</span><span>${Math.round(state.distanceToPin)} m to pin</span><span>${club?.displayName ?? state.selectedClub}</span></div>`;
-    this.hint.textContent = PHASE_HINTS[state.phase];
+    this.info.innerHTML = `
+      <div class="hud-course">${courseName}</div>
+      <div class="hud-hole-row">
+        <strong class="hud-hole">HOLE ${state.hole}</strong>
+        <span class="hud-par">PAR ${state.par}</span>
+      </div>
+      <div class="hud-grid">
+        <div class="hud-stat"><span>STROKE</span><strong>${state.stroke}</strong></div>
+        <div class="hud-stat"><span>TO PIN</span><strong>${Math.round(state.distanceToPin)}<small> m</small></strong></div>
+        <div class="hud-stat"><span>CLUB</span><strong>${club?.displayName ?? state.selectedClub}</strong></div>
+      </div>`;
+    if (state.phase === 'resolving') {
+      this.hint.innerHTML = '<span class="hud-flight">BALL IN FLIGHT</span>';
+    } else {
+      this.hint.textContent = PHASE_HINTS[state.phase];
+    }
   }
 
   setSwingEnabled(enabled: boolean): void {

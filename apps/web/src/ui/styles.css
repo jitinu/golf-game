@@ -336,3 +336,338 @@ input {
   border-radius: 8px;
   white-space: pre;
 }
+
+:root {
+  --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --font-body: 'Inter Variable', Inter, system-ui, sans-serif;
+  --panel: linear-gradient(165deg, #0c1a20e8, #07121688);
+  --line: #ffffff1c;
+  --accent: #7ee2a0;
+  --gold: #f2c14e;
+  --muted: #9bb8c2;
+  font-family: var(--font-body);
+}
+
+body {
+  font-family: var(--font-body);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px #0006, inset 0 1px 0 #ffffff12;
+  padding: 14px 16px;
+  backdrop-filter: blur(10px);
+}
+
+.panel h1,
+.panel h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.button,
+.course-card {
+  border-color: var(--line);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.button:hover,
+.course-card:hover {
+  background: #ffffff0a;
+  border-color: #ffffff40;
+}
+
+.button:disabled {
+  opacity: 0.4;
+  filter: grayscale(0.8);
+}
+
+.course-card strong {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.course-card small {
+  color: var(--muted);
+}
+
+.hud {
+  min-width: 294px;
+  max-width: 360px;
+  padding-left: 20px;
+}
+
+.hud::before {
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 4px;
+  background: var(--accent);
+  box-shadow: 0 0 14px #7ee2a055;
+  content: '';
+}
+
+.hud-course {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.hud-hole-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 7px 0 12px;
+}
+
+.hud-hole {
+  font-family: var(--font-display);
+  font-size: 34px;
+  line-height: 1;
+}
+
+.hud-par {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #ffffff14;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hud-grid {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.hud-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hud-stat > span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hud-stat strong {
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-stat small {
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+.hud-hint {
+  color: var(--muted);
+  font-family: var(--font-body);
+  line-height: 1.45;
+}
+
+.hud-flight {
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+}
+
+.swing-button {
+  background: linear-gradient(180deg, #8df0ad, #4fbf7a);
+  box-shadow: 0 8px 24px #4fbf7a55, inset 0 1px 0 #ffffff66;
+  color: #0a1f14;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+.meters {
+  font-family: var(--font-body);
+}
+
+.meter-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.meter-label strong {
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.meter-track {
+  height: 10px;
+  background: #ffffff18;
+  box-shadow: inset 0 1px 3px #0008;
+}
+
+.accuracy-marker {
+  width: 4px;
+  height: 14px;
+  margin-left: -2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.wind-dial {
+  width: 58px;
+  height: 58px;
+  box-shadow: inset 0 0 12px #7ee2a018;
+}
+
+.wind-ticks {
+  inset: 2px;
+  background: repeating-conic-gradient(#ffffff35 0 2deg, transparent 2deg 30deg);
+  mask: radial-gradient(transparent 0 72%, #000 74%);
+}
+
+.wind-title {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+.wind-speed {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wind-unit {
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.wind-label {
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wind-strong .wind-arrow svg {
+  fill: var(--gold);
+}
+
+.club-selector {
+  scrollbar-color: #ffffff30 transparent;
+  scrollbar-width: thin;
+}
+
+.club-selector > strong {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.club-category {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.club-group {
+  margin: 12px 0;
+}
+
+.club-grid {
+  grid-template-columns: 1fr;
+}
+
+.club-grid .club {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.club-grid .club:hover {
+  border-color: #ffffff40;
+  background: #ffffff0a;
+}
+
+.club-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.club-carry {
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.club-carry small {
+  font-family: var(--font-body);
+  font-size: 10px;
+}
+
+.club-grid button.active {
+  border-color: transparent;
+  outline: none;
+  background: var(--accent);
+  color: #0a1f14;
+}
+
+.club-grid button.active .club-carry {
+  color: #0a1f14;
+}
+
+.modal th {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.toast {
+  border-left: 3px solid var(--accent);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}

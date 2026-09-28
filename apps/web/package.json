@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@dgreenheck/ez-tree": "1.1.0",
+    "@fontsource-variable/inter": "5.2.8",
+    "@fontsource/barlow-condensed": "5.2.8",
     "@golf/course-format": "workspace:*",
     "@golf/protocol": "workspace:*",
     "@golf/sim": "workspace:*",

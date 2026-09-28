@@ -179,7 +179,13 @@ interface ArmSolution {
 }
 
 /** Two-bone analytic IK on shoulder → elbow → wrist, then twists the forearm and orients the hand for the grip. */
-function solveArm(rig: SwingRig, side: Side, wrist: THREE.Vector3, palmNormal: THREE.Vector3): ArmSolution | undefined {
+function solveArm(
+  rig: SwingRig,
+  side: Side,
+  wrist: THREE.Vector3,
+  palmNormal: THREE.Vector3,
+  shaft: THREE.Vector3,
+): ArmSolution | undefined {
   const upper = rig.bone(`${side.name}Arm`);
   const fore = rig.bone(`${side.name}ForeArm`);
   const hand = rig.bone(`${side.name}Hand`);
@@ -224,7 +230,22 @@ function solveArm(rig: SwingRig, side: Side, wrist: THREE.Vector3, palmNormal: T
   rig.update();
 
   const palm = palmNormal.clone().normalize();
-  const fingers = forearmAxis.clone().addScaledVector(palm, -forearmAxis.dot(palm)).normalize();
+  const alongForearm = forearmAxis.clone().addScaledVector(palm, -forearmAxis.dot(palm)).normalize();
+  const wrap = new THREE.Vector3().crossVectors(shaft, palm);
+  wrap.addScaledVector(palm, -wrap.dot(palm));
+  const fingers = alongForearm.clone();
+  if (wrap.lengthSq() >= 1e-6) {
+    wrap.normalize();
+    if (wrap.dot(alongForearm) < 0) wrap.negate();
+    const MAX_WRIST = 0.8;
+    const deviation = Math.acos(THREE.MathUtils.clamp(alongForearm.dot(wrap), -1, 1));
+    if (deviation > 1e-4) {
+      const sign = Math.sign(new THREE.Vector3().crossVectors(alongForearm, wrap).dot(palm)) || 1;
+      fingers.applyQuaternion(
+        new THREE.Quaternion().setFromAxisAngle(palm, sign * Math.min(deviation, MAX_WRIST)),
+      );
+    }
+  }
   const across = fingers.clone().cross(palm).normalize();
   const target = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(across, fingers, palm));
   const restBasis = new THREE.Quaternion().setFromRotationMatrix(
@@ -446,7 +467,7 @@ function placeHands(rig: SwingRig, frame: ClubFrame): void {
     const along = side.name === 'Left' ? 0.09 : 0.17;
     const wrist = frame.butt.clone().addScaledVector(frame.shaft, along).addScaledVector(frame.clubX, 0.035 * side.sign);
     const palm = frame.clubX.clone().multiplyScalar(-side.sign);
-    solveArm(rig, side, wrist, palm);
+    solveArm(rig, side, wrist, palm, frame.shaft);
     curlFingers(rig, side, 1.15);
   }
   rig.update();
@@ -548,7 +569,7 @@ export function bakeCelebration(context: BakeContext): THREE.AnimationClip {
       const upWrist = shoulder.clone().add(new THREE.Vector3(0.25 * side.sign, 0.5, 0.18));
       const wrist = gripWrist.lerp(upWrist, raise);
       const palm = addressClub.clubX.clone().multiplyScalar(-side.sign).lerp(Z, raise).normalize();
-      solveArm(rig, side, wrist, palm);
+      solveArm(rig, side, wrist, palm, addressClub.shaft);
       curlFingers(rig, side, 1.15 * (1 - raise) + 0.4 * raise);
     }
     rig.update();

@@ -9,8 +9,8 @@ export class Meters {
     this.root = document.createElement('div');
     this.root.className = 'panel meters';
     this.root.innerHTML =
-      '<div>Power <span class="power-label"></span></div><div class="meter-track"><div class="meter-fill power-fill"></div></div>' +
-      '<div>Accuracy <span class="accuracy-label"></span></div><div class="meter-track accuracy-track"><div class="accuracy-marker"></div></div>';
+      '<div class="meter-label"><span>POWER</span><strong class="power-label"></strong></div><div class="meter-track"><div class="meter-fill power-fill"></div></div>' +
+      '<div class="meter-label"><span>ACCURACY</span><strong class="accuracy-label"></strong></div><div class="meter-track accuracy-track"><div class="accuracy-marker"></div></div>';
     this.powerFill = this.root.querySelector('.power-fill') as HTMLDivElement;
     this.accuracyMarker = this.root.querySelector('.accuracy-marker') as HTMLDivElement;
     this.powerLabel = this.root.querySelector('.power-label') as HTMLSpanElement;
