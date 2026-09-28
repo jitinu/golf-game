@@ -8,6 +8,10 @@ export interface SourceCourse extends Omit<CourseManifest, 'heightfield' | 'surf
   terrain: {
     baseHeight: number;
     noise: { seed: number; amplitude: number; frequency: number; octaves: number };
+    /** Fine undulation layered on the rolling base (defaults: 0.35 m at ~22 m wavelength). */
+    detail?: { amplitude: number; frequency: number };
+    /** Fairways sit a little proud along their centreline and fall away to the edges (metres, default 0.3). */
+    fairwayCrown?: number;
     mounds: { x: number; z: number; radius: number; height: number }[];
     greenFlatten?: boolean;
   };
@@ -34,7 +38,14 @@ const BUNKER_BLEND = 2.5;
 const WATER_BANK = 0.35;
 const WATER_BED = 1.4;
 const WATER_BLEND = 7;
-const TEE_BOX_RADIUS_M = 7;
+/** Tee complex: one mown strip through all of a hole's tee markers, with a first-cut collar around it. */
+const TEE_STRIP_HALF_WIDTH_M = 5;
+const TEE_STRIP_END_M = 5;
+const TEE_COLLAR_M = 2.5;
+/** Mown edges wander by this fraction of the local half width so fairways never have ruler-straight sides. */
+const EDGE_WANDER = 0.16;
+const EDGE_WANDER_FREQUENCY = 0.035;
+const DETAIL_DEFAULT = { amplitude: 0.35, frequency: 0.045 };
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
@@ -52,6 +63,9 @@ export interface TreeScatter {
   /** Candidates further than this from any hole are dropped so belts hug the holes. */
   maxPlayDistance: number;
   kinds: { kind: string; weight: number; scale: [number, number] }[];
+  /** Species picked instead of `kinds` for candidates within `waterDistance` metres of a water body. */
+  waterKinds?: { kind: string; weight: number; scale: [number, number] }[];
+  waterDistance?: number;
 }
 
 class SimplexNoise {
@@ -157,25 +171,50 @@ function catmullRom(points: { x: number; z: number }[], widths: number[], count 
   return result;
 }
 
-function splineDistance(x: number, z: number, spline: Spline): number {
-  const sampled = catmullRom(spline.points, spline.widths);
-  let distance = Number.POSITIVE_INFINITY;
-  for (let index = 1; index < sampled.length; index += 1) {
-    distance = Math.min(distance, distanceToSegment(x, z, sampled[index - 1]!, sampled[index]!));
+const sampledSplines = new WeakMap<Spline, { x: number; z: number; width: number }[]>();
+
+function sampledSpline(spline: Spline): { x: number; z: number; width: number }[] {
+  let sampled = sampledSplines.get(spline);
+  if (!sampled) {
+    sampled = catmullRom(spline.points, spline.widths);
+    sampledSplines.set(spline, sampled);
   }
-  return distance;
+  return sampled;
 }
 
-function classifySurface(x: number, z: number, features: CourseFeatures): SurfaceId {
+/** Distance to the centreline and the interpolated width at the closest point, so widths vary along the hole. */
+function splineNearest(x: number, z: number, spline: Spline): { distance: number; width: number } {
+  const sampled = sampledSpline(spline);
+  let best = { distance: Number.POSITIVE_INFINITY, width: spline.widths[0] ?? 1 };
+  for (let index = 1; index < sampled.length; index += 1) {
+    const a = sampled[index - 1]!;
+    const b = sampled[index]!;
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const denominator = dx * dx + dz * dz;
+    const t = denominator === 0 ? 0 : Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / denominator));
+    const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+    if (distance < best.distance) best = { distance, width: a.width + (b.width - a.width) * t };
+  }
+  return best;
+}
+
+/** Signed distance to the mown edge (negative inside), with the edge wandering so it never reads as ruler-straight. */
+function splineEdgeDistance(x: number, z: number, spline: Spline, wander: SimplexNoise | undefined): number {
+  const nearest = splineNearest(x, z, spline);
+  const wobble = wander ? 1 + EDGE_WANDER * fbm(wander, x, z, EDGE_WANDER_FREQUENCY, 2) * 2 : 1;
+  return nearest.distance - (nearest.width / 2) * wobble;
+}
+
+function classifySurface(x: number, z: number, features: CourseFeatures, wander?: SimplexNoise): SurfaceId {
   let surface = SurfaceId.Rough;
   for (const spline of features.fairways) {
-    const distance = splineDistance(x, z, spline);
-    const width = Math.max(...spline.widths, 1) / 2;
-    if (distance <= width) surface = spline.surface;
-    else if (spline.edgeSurface !== undefined && distance <= width + (spline.edgeWidth ?? 0)) surface = spline.edgeSurface;
+    const edge = splineEdgeDistance(x, z, spline, wander);
+    if (edge <= 0) surface = spline.surface;
+    else if (spline.edgeSurface !== undefined && edge <= (spline.edgeWidth ?? 0)) surface = spline.edgeSurface;
   }
   for (const spline of features.paths ?? []) {
-    if (splineDistance(x, z, spline) <= Math.max(...spline.widths, 1) / 2) surface = spline.surface;
+    if (splineNearest(x, z, spline).distance <= Math.max(...spline.widths, 1) / 2) surface = spline.surface;
   }
   for (const polygon of features.greens) if (pointInPolygon(x, z, polygon)) surface = polygon.surface;
   for (const polygon of features.bunkers) if (pointInPolygon(x, z, polygon)) surface = polygon.surface;
@@ -212,10 +251,17 @@ function polygonSignedDistance(x: number, z: number, polygon: Polygon): number {
 
 function baseHeightAt(source: SourceCourse, noise: SimplexNoise, x: number, z: number): number {
   const terrain = source.terrain;
+  const detail = terrain.detail ?? DETAIL_DEFAULT;
   let height = terrain.baseHeight + terrain.noise.amplitude * fbm(noise, x, z, terrain.noise.frequency, terrain.noise.octaves);
+  height += detail.amplitude * fbm(noise, x + 1000, z - 1000, detail.frequency, 3);
   for (const mound of terrain.mounds) {
     const distance = Math.hypot(x - mound.x, z - mound.z);
     if (distance < mound.radius) height += mound.height * (1 - distance / mound.radius) ** 2;
+  }
+  for (const spline of source.features.fairways) {
+    const nearest = splineNearest(x, z, spline);
+    const half = nearest.width / 2 + (spline.edgeWidth ?? 0) + 4;
+    if (nearest.distance < half) height += (terrain.fairwayCrown ?? 0.3) * (1 - (nearest.distance / half) ** 2);
   }
   return height;
 }
@@ -284,22 +330,48 @@ function polygonDistance(x: number, z: number, polygon: Polygon): number {
   return distance;
 }
 
+/** Distance to the centreline of the nearest hole's tee strip (back tee to front tee, extended a little each way). */
+function teeStripDistance(x: number, z: number, source: SourceCourse): number {
+  let distance = Number.POSITIVE_INFINITY;
+  for (const hole of source.holes) {
+    const tees = hole.tees.map((tee) => tee.position);
+    if (tees.length === 0) continue;
+    const back = tees[0]!;
+    const front = tees[tees.length - 1]!;
+    const length = Math.hypot(front.x - back.x, front.z - back.z);
+    const dirX = length > 0 ? (front.x - back.x) / length : 0;
+    const dirZ = length > 0 ? (front.z - back.z) / length : 1;
+    const a = { x: back.x - dirX * TEE_STRIP_END_M, z: back.z - dirZ * TEE_STRIP_END_M };
+    const b = { x: front.x + dirX * TEE_STRIP_END_M, z: front.z + dirZ * TEE_STRIP_END_M };
+    distance = Math.min(distance, distanceToSegment(x, z, a, b));
+  }
+  return distance;
+}
+
 /** Distance from the nearest in-play area (fairway incl. first cut, greens, tees). */
 function playDistance(x: number, z: number, source: SourceCourse): number {
   let distance = Number.POSITIVE_INFINITY;
   for (const spline of source.features.fairways) {
-    const edge = Math.max(...spline.widths, 1) / 2 + (spline.edgeWidth ?? 0);
-    distance = Math.min(distance, splineDistance(x, z, spline) - edge);
+    distance = Math.min(distance, splineEdgeDistance(x, z, spline, undefined) - (spline.edgeWidth ?? 0));
+  }
+  for (const spline of source.features.paths ?? []) {
+    distance = Math.min(distance, splineNearest(x, z, spline).distance - Math.max(...spline.widths, 1) / 2);
   }
   for (const polygon of [...source.features.greens, ...source.features.bunkers]) distance = Math.min(distance, polygonDistance(x, z, polygon));
-  for (const hole of source.holes) for (const tee of hole.tees) distance = Math.min(distance, Math.hypot(x - tee.position.x, z - tee.position.z) - 8);
+  distance = Math.min(distance, teeStripDistance(x, z, source) - TEE_STRIP_HALF_WIDTH_M - TEE_COLLAR_M);
   return distance;
+}
+
+function pickKind(kinds: TreeScatter['kinds'], roll: number): TreeScatter['kinds'][number] {
+  let pick = roll * kinds.reduce((sum, kind) => sum + kind.weight, 0);
+  return kinds.find((candidate) => (pick -= candidate.weight) <= 0) ?? kinds[kinds.length - 1]!;
 }
 
 export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
   const scatter = source.treeScatter;
   if (!scatter || scatter.kinds.length === 0) return [];
-  const totalWeight = scatter.kinds.reduce((sum, kind) => sum + kind.weight, 0);
+  const waterKinds = scatter.waterKinds ?? [];
+  const waterDistance = scatter.waterDistance ?? 12;
   const trees: CourseFeatures['trees'] = [];
   const columns = Math.floor(source.map.width / scatter.spacing);
   const rows = Math.floor(source.map.depth / scatter.spacing);
@@ -317,8 +389,8 @@ export function scatterTrees(source: SourceCourse): CourseFeatures['trees'] {
       if (surface !== SurfaceId.Rough && surface !== SurfaceId.OutOfBounds) continue;
       const distance = playDistance(x, z, source);
       if (distance < scatter.minPlayDistance || distance > scatter.maxPlayDistance) continue;
-      let pick = hash2(scatter.seed + 3, column, row) * totalWeight;
-      const kind = scatter.kinds.find((candidate) => (pick -= candidate.weight) <= 0) ?? scatter.kinds[scatter.kinds.length - 1]!;
+      const nearWater = waterKinds.length > 0 && source.features.water.some((polygon) => polygonDistance(x, z, polygon) < waterDistance);
+      const kind = pickKind(nearWater ? waterKinds : scatter.kinds, hash2(scatter.seed + 3, column, row));
       // Skew toward mid-size with occasional giants so the canopy line breaks up.
       const t = hash2(scatter.seed + 4, column, row);
       const scale = kind.scale[0] + (kind.scale[1] - kind.scale[0]) * (t < 0.85 ? t / 0.85 * 0.8 : 0.8 + ((t - 0.85) / 0.15) * 0.2);
@@ -364,14 +436,17 @@ export function buildCourse(source: SourceCourse): { manifest: CourseManifest; h
     }
   }
   const surface = new Uint8Array(maskWidth * maskDepth);
-  const tees = source.holes.flatMap((hole) => hole.tees.map((tee) => tee.position));
   for (let iz = 0; iz < maskDepth; iz += 1) {
     for (let ix = 0; ix < maskWidth; ix += 1) {
       const x = ix * source.maskCellSize;
       const z = iz * source.maskCellSize;
-      let id = classifySurface(x, z, features);
-      // Tee boxes are mown to fairway height (only ever carved out of rough / first cut).
-      if ((id === SurfaceId.Rough || id === SurfaceId.FirstCut) && tees.some((tee) => Math.hypot(x - tee.x, z - tee.z) <= TEE_BOX_RADIUS_M)) id = SurfaceId.Fairway;
+      let id = classifySurface(x, z, features, noise);
+      // Tee complexes are mown to fairway height with a first-cut collar (only ever carved out of rough / first cut).
+      if (id === SurfaceId.Rough || id === SurfaceId.FirstCut) {
+        const tee = teeStripDistance(x, z, source);
+        if (tee <= TEE_STRIP_HALF_WIDTH_M) id = SurfaceId.Fairway;
+        else if (tee <= TEE_STRIP_HALF_WIDTH_M + TEE_COLLAR_M) id = SurfaceId.FirstCut;
+      }
       surface[iz * maskWidth + ix] = id;
     }
   }
