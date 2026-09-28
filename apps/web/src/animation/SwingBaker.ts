@@ -314,32 +314,26 @@ function solveArm(
   return { forearmAxis, fingers };
 }
 
-/** Wraps the fingers around the shaft: each phalanx curls about the shaft axis, toward the palm. */
-function curlFingers(rig: SwingRig, side: Side, amount: number, shaft: THREE.Vector3, palmNormal: THREE.Vector3): void {
-  const hand = rig.bone(`${side.name}Hand`);
-  if (!hand) return;
-  hand.updateWorldMatrix(true, false);
-  const restHand = rig.handFrame(side.name);
-  const handDelta = rig.quaternionOf(hand).multiply(rig.restWorld(hand).clone().invert());
-  const fingersNow = restHand.fingers.clone().applyQuaternion(handDelta);
-  const sign = Math.sign(new THREE.Vector3().crossVectors(shaft, fingersNow).dot(palmNormal)) || 1;
+/** Curls each phalanx toward the palm using the live finger segment direction. */
+function curlFingers(rig: SwingRig, side: Side, amount: number, _shaft: THREE.Vector3, palmNormal: THREE.Vector3): void {
+  const inward = palmNormal.clone();
   const axis = new THREE.Vector3();
-  const curl = (name: string, angle: number): void => {
-    const bone = rig.bone(name);
-    if (!bone) return;
-    bone.updateWorldMatrix(true, false);
-    axis.copy(shaft).applyQuaternion(rig.quaternionOf(bone).invert()).normalize();
-    rig.applyLocal(name, axis, sign * angle);
-    bone.updateWorldMatrix(false, false);
+  const curl = (prefix: string, segment: number, angle: number): void => {
+    const bone = rig.bone(`${prefix}${segment}`);
+    const child = rig.bone(`${prefix}${segment + 1}`);
+    if (!bone || !child) return;
+    const direction = rig.axisOf(bone, child);
+    axis.crossVectors(direction, inward).normalize();
+    if (axis.lengthSq() < 1e-6) return;
+    rig.rotate(bone, new THREE.Quaternion().setFromAxisAngle(axis, angle));
+    rig.update();
   };
   for (const finger of ['Index', 'Middle', 'Ring', 'Pinky']) {
-    for (const segment of [1, 2, 3]) {
-      curl(`${side.name}Hand${finger}${segment}`, amount * (segment === 1 ? 0.9 : 1));
-    }
+    const prefix = `${side.name}Hand${finger}`;
+    for (const segment of [1, 2, 3]) curl(prefix, segment, amount * (segment === 1 ? 0.75 : 0.9));
   }
-  for (const segment of [1, 2, 3]) {
-    curl(`${side.name}HandThumb${segment}`, amount * 0.25);
-  }
+  const thumb = `${side.name}HandThumb`;
+  for (const segment of [1, 2, 3]) curl(thumb, segment, amount * 0.3);
 }
 
 function lookAt(rig: SwingRig, target: THREE.Vector3, weight: number): void {

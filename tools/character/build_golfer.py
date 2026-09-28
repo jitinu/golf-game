@@ -274,6 +274,66 @@ def cull_mesh_under_clothing(
     return deleted_count, kept_count
 
 
+def fill_small_clothing_holes(mesh_obj, max_edges=6, max_diameter=0.025):
+    """Fill only isolated, small boundary loops in a baked clothing mesh."""
+    bm = bmesh.new()
+    bm.from_mesh(mesh_obj.data)
+    boundary_edges = [edge for edge in bm.edges if edge.is_boundary]
+    edges_by_vertex = {}
+    for edge in boundary_edges:
+        for vertex in edge.verts:
+            edges_by_vertex.setdefault(vertex, []).append(edge)
+
+    components = []
+    visited = set()
+    for seed in boundary_edges:
+        if seed in visited:
+            continue
+        component = []
+        stack = [seed]
+        while stack:
+            edge = stack.pop()
+            if edge in visited:
+                continue
+            visited.add(edge)
+            component.append(edge)
+            for vertex in edge.verts:
+                stack.extend(
+                    neighbor
+                    for neighbor in edges_by_vertex[vertex]
+                    if neighbor not in visited
+                )
+        components.append(component)
+
+    fill_edges = []
+    filled_diameters = []
+    for component in components:
+        if len(component) > max_edges:
+            continue
+        vertices = {vertex for edge in component for vertex in edge.verts}
+        diameter = max(
+            (first.co - second.co).length
+            for first in vertices
+            for second in vertices
+        )
+        if diameter <= max_diameter:
+            fill_edges.extend(component)
+            filled_diameters.append(diameter)
+
+    if fill_edges:
+        bmesh.ops.holes_fill(bm, edges=fill_edges, sides=0)
+        bm.to_mesh(mesh_obj.data)
+        mesh_obj.data.update()
+    bm.free()
+
+    diameters = ", ".join(f"{diameter:.4f}m" for diameter in filled_diameters) or "none"
+    print(
+        f"{mesh_obj.name} hole repair: {len(components)} boundary components, "
+        f"filled {len(filled_diameters)} ({diameters})"
+    )
+    return len(filled_diameters)
+
+
 def clear_clothing_head_weights(clothing):
     """Keep clothing deformation driven by the torso and limbs, not head/neck bones."""
     target_groups = [
@@ -671,6 +731,8 @@ def child_with_material(fragment):
 pants_obj = child_with_material("wool_pants")
 eyes_obj = child_with_material("high-poly")
 culling_polo = child_with_material("polo")
+if culling_polo is not None:
+    fill_small_clothing_holes(culling_polo)
 culling_clothes = [obj for obj in (culling_polo, pants_obj) if obj is not None]
 if culling_polo is not None:
     clear_clothing_head_weights(culling_polo)
